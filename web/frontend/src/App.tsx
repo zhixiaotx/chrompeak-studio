@@ -9,6 +9,17 @@ import {
   parseCsvFile,
   preprocessForDisplay,
 } from "./analysis";
+import {
+  batchProcessLocalZip,
+  downloadBlob,
+} from "./utils/localBatch";
+import {
+  listLocalProjects,
+  saveLocalProject,
+  deleteLocalProject,
+  getLocalProject,
+  type LocalProject,
+} from "./utils/localProjects";
 import AlgorithmPanel from "./components/AlgorithmPanel";
 import Chromatogram from "./components/Chromatogram";
 import ResultTable from "./components/ResultTable";
@@ -46,12 +57,21 @@ export default function App() {
   );
   const [wsStatus, setWsStatus] = useState("");
   const [batchUrl, setBatchUrl] = useState("");
+  const [localProjs, setLocalProjs] = useState<LocalProject[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [backendOk, setBackendOk] = useState<boolean | null>(null); // null=检测中, true=连上, false=离线
   const [showAuth, setShowAuth] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const debounceRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const zipInputRef = useRef<HTMLInputElement | null>(null);
+  const jsonInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 载入浏览器本地保存的项目列表
+  useEffect(() => {
+    setLocalProjs(listLocalProjects());
+  }, []);
 
   const enabledNames = () => algos.map((a) => a.name).filter((n) => enabled[n]);
 
@@ -232,15 +252,34 @@ export default function App() {
     if (f) analyzeFile(f);
   };
 
-  // ZIP 批处理
+  // ZIP 批处理（在线走后端；离线在浏览器本地算）
   const onZipPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+
     if (backendOk !== true) {
-      setStatus({ msg: "离线模式下不支持 ZIP 批量（请连接后端，或单个上传 CSV）", kind: "error" });
-      e.target.value = "";
+      setStatus({ msg: "本地批量处理中…", kind: "" });
+      try {
+        const res = await batchProcessLocalZip(
+          f,
+          enabledNames(),
+          params,
+          (done, total, cur) =>
+            setStatus({ msg: `批量进度 ${done}/${total} · ${cur}`, kind: "" })
+        );
+        downloadBlob(res.blob, res.fileName);
+        setStatus({
+          msg: `批量完成：${res.nFiles} 个文件 / ${res.nPeaks} 个峰，已下载 ${res.fileName}`,
+          kind: "ok",
+        });
+      } catch (err: any) {
+        setStatus({ msg: err.message || "批量失败", kind: "error" });
+      } finally {
+        e.target.value = "";
+      }
       return;
     }
+
     setStatus({ msg: "批量处理中…", kind: "" });
     try {
       const res = await api.analyzeBatch(f, enabledNames(), token);
@@ -248,6 +287,8 @@ export default function App() {
       setStatus({ msg: `批量完成，共 ${res.n_peaks} 个峰`, kind: "ok" });
     } catch (err: any) {
       setStatus({ msg: err.message || "批量失败", kind: "error" });
+    } finally {
+      e.target.value = "";
     }
   };
 
@@ -297,22 +338,61 @@ export default function App() {
     reader.readAsText(f);
   };
 
-  // 保存项目（需登录）
+  // 保存项目：已登录且后端在线 -> 云端；否则保存到浏览器 localStorage
   const saveProject = async () => {
-    if (!token) {
-      setStatus({ msg: "请先登录再保存项目", kind: "error" });
+    const name = fileName || "project";
+    if (!x.length) {
+      setStatus({ msg: "尚无数据可保存", kind: "error" });
       return;
     }
-    try {
-      const res = await api.createProject(
-        { name: fileName || "project", algorithms: enabledNames(), algo_params: params, x, y },
-        token
-      );
-      setProjectId(res.id);
-      setStatus({ msg: `项目已保存 #${res.id}`, kind: "ok" });
-    } catch (err: any) {
-      setStatus({ msg: err.message, kind: "error" });
+    const payload = {
+      name,
+      algorithms: enabledNames(),
+      algo_params: params,
+      x,
+      y,
+      results: peaks,
+    };
+
+    if (backendOk === true && token) {
+      try {
+        const res = await api.createProject(
+          { name, algorithms: enabledNames(), algo_params: params, x, y },
+          token
+        );
+        setProjectId(res.id);
+        setStatus({ msg: `项目已保存到云端 #${res.id}`, kind: "ok" });
+        return;
+      } catch (err: any) {
+        // 云端失败时仍可落到本地
+        setStatus({ msg: `云端保存失败（${err.message}），已改为保存到本地`, kind: "" });
+      }
     }
+
+    try {
+      const p = saveLocalProject(payload);
+      setLocalProjs(listLocalProjects());
+      setStatus({ msg: `项目已保存到本浏览器：${p.name}`, kind: "ok" });
+    } catch {
+      setStatus({ msg: "本地保存失败（localStorage 空间不足？）", kind: "error" });
+    }
+  };
+
+  const loadLocalProject = (id: number) => {
+    const p = getLocalProject(id);
+    if (!p) return;
+    setX(p.x || []);
+    setY(p.y || []);
+    setYProc(p.y || []);
+    setPeaks((p.results as PeaksMap) || {});
+    setFileName(p.name);
+    if (p.algo_params) setParams(p.algo_params);
+    setStatus({ msg: `已载入本地项目：${p.name}`, kind: "ok" });
+  };
+
+  const removeLocalProject = (id: number) => {
+    deleteLocalProject(id);
+    setLocalProjs(listLocalProjects());
   };
 
   const flatPeaks: Peak[] = Object.values(peaks).flat();
@@ -340,8 +420,8 @@ export default function App() {
 
       {backendOk === false && (
         <div className="offline-banner">
-          ⚠ 未连接后端，已切换「离线演示模式」：分析在浏览器本地完成（可使用示例数据或上传 CSV）。
-          登录 / 保存项目 / ZIP 批量需自备 FastAPI 后端。
+          ⚠ 未连接后端，已切换「离线演示模式」：分析、保存项目、ZIP 批量都在浏览器本地完成。
+          登录（云端）需自备 FastAPI 后端。
         </div>
       )}
 
@@ -361,19 +441,9 @@ export default function App() {
                 <input type="file" accept=".csv,.txt" onChange={onFilePick} />
               </div>
               <div className="row" style={{ marginTop: 8 }}>
-                <label
-                  className="ghost"
-                  style={{ flex: 1, opacity: backendOk === true ? 1 : 0.45 }}
-                  title={backendOk === true ? "" : "离线模式不支持，需连接后端"}
-                >
-                  ZIP 批量
-                  <input
-                    type="file"
-                    accept=".zip"
-                    onChange={onZipPick}
-                    disabled={backendOk !== true}
-                    style={{ marginTop: 4 }}
-                  />
+                <label className="ghost" style={{ flex: 1 }} title={backendOk === true ? "" : "离线模式：在浏览器本地解压并计算"}>
+                  ZIP 批量{backendOk === true ? "（后端）" : "（本地）"}
+                  <input type="file" accept=".zip" onChange={onZipPick} style={{ marginTop: 4 }} />
                 </label>
               </div>
               {batchUrl && (
@@ -390,8 +460,7 @@ export default function App() {
                 <button
                   className="secondary"
                   onClick={saveProject}
-                  disabled={backendOk !== true}
-                  title={backendOk === true ? "" : "离线模式不支持保存项目"}
+                  title={backendOk === true ? "" : "离线模式：保存到本浏览器 localStorage"}
                 >
                   保存项目
                 </button>
@@ -413,6 +482,30 @@ export default function App() {
                   ? "调整参数会在 250ms 后触发 WebSocket 流式重算（边滑边出峰）。"
                   : "调整参数会在 250ms 后在浏览器本地重算（离线模式）。"}
               </div>
+            </div>
+
+            <div className="card" style={{ marginTop: 12 }}>
+              <h3>本地项目（{localProjs.length}）</h3>
+              {localProjs.length === 0 ? (
+                <div className="hint">暂无。点「保存项目」把当前数据存到本浏览器。</div>
+              ) : (
+                <ul className="proj-list">
+                  {localProjs.map((p) => (
+                    <li key={p.id}>
+                      <div className="proj-main">
+                        <span className="proj-name" title={p.name}>{p.name}</span>
+                        <span className="hint">
+                          {new Date(p.created_at).toLocaleString()} · {(p.results ? Object.values(p.results).flat().length : 0)} 峰
+                        </span>
+                      </div>
+                      <div className="row">
+                        <button className="ghost" onClick={() => loadLocalProject(p.id)}>载入</button>
+                        <button className="ghost" onClick={() => removeLocalProject(p.id)}>删除</button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
 

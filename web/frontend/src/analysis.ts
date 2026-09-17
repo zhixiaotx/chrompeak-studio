@@ -246,9 +246,8 @@ export function preprocessForDisplay(x: number[], y: number[]): number[] {
   return ys;
 }
 
-// 解析上传的 CSV/TXT（两列：x, y），自动跳过表头与非数字行
-export async function parseCsvFile(file: File): Promise<{ x: number[]; y: number[] }> {
-  const text = await file.text();
+// 解析 CSV/TXT 文本（两列：x, y），自动跳过表头与非数字行
+export function parseCsvText(text: string): { x: number[]; y: number[] } {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
   const x: number[] = [];
   const y: number[] = [];
@@ -263,6 +262,10 @@ export async function parseCsvFile(file: File): Promise<{ x: number[]; y: number
     }
   }
   return { x, y };
+}
+
+export async function parseCsvFile(file: File): Promise<{ x: number[]; y: number[] }> {
+  return parseCsvText(await file.text());
 }
 
 // 前端生成示例色谱（无后端时的默认数据）

@@ -119,6 +119,20 @@ th { color: var(--muted); font-weight: 600; }
 .auth-card { margin-bottom: 12px; }
 .auth-card input:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.proj-list { list-style: none; margin: 0; padding: 0; }
+.proj-list li {
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.proj-list li:last-child { border-bottom: none; }
+.proj-main { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.proj-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 11px; margin-left: 6px; }
 
