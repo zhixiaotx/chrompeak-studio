@@ -107,6 +107,15 @@ th { color: var(--muted); font-weight: 600; }
 .status.error { color: var(--danger); }
 .status.ok { color: var(--ok); }
 
+.offline-banner {
+  background: #3a2f12;
+  color: #ffd479;
+  border-bottom: 1px solid #5a4a1a;
+  padding: 8px 16px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 11px; margin-left: 6px; }
 

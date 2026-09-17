@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, wsUrl, API_BASE } from "./api";
 import type { AlgMeta, ParamSpec, Peak } from "./api";
 import { lttb } from "./utils/lttb";
+import {
+  analyzeLocal,
+  LOCAL_ALGORITHMS,
+  syntheticChromatogram,
+  parseCsvFile,
+  preprocessForDisplay,
+} from "./analysis";
 import AlgorithmPanel from "./components/AlgorithmPanel";
 import Chromatogram from "./components/Chromatogram";
 import ResultTable from "./components/ResultTable";
@@ -40,6 +47,7 @@ export default function App() {
   const [wsStatus, setWsStatus] = useState("");
   const [batchUrl, setBatchUrl] = useState("");
   const [projectId, setProjectId] = useState<number | null>(null);
+  const [backendOk, setBackendOk] = useState<boolean | null>(null); // null=检测中, true=连上, false=离线
 
   const wsRef = useRef<WebSocket | null>(null);
   const debounceRef = useRef<number | null>(null);
@@ -54,7 +62,7 @@ export default function App() {
     }
   }, [token, username]);
 
-  // 拉取算法元信息
+  // 拉取算法元信息；后端不可用时切换离线演示模式
   useEffect(() => {
     api
       .algorithms()
@@ -64,10 +72,30 @@ export default function App() {
         for (const a of list) en[a.name] = true;
         setEnabled(en);
         setParams(defaultParams(list));
+        setBackendOk(true);
       })
-      .catch((e) =>
-        setStatus({ msg: `无法获取算法列表：${e.message}`, kind: "error" })
-      );
+      .catch(() => {
+        setAlgos(LOCAL_ALGORITHMS);
+        const en: Record<string, boolean> = {};
+        for (const a of LOCAL_ALGORITHMS) en[a.name] = true;
+        setEnabled(en);
+        const localParams = defaultParams(LOCAL_ALGORITHMS);
+        setParams(localParams);
+        const s = syntheticChromatogram();
+        const init = analyzeLocal(
+          s.x,
+          s.y,
+          LOCAL_ALGORITHMS.map((a) => a.name),
+          localParams
+        );
+        setX(s.x);
+        setY(s.y);
+        setYProc(init.y_proc);
+        setPeaks(init.results);
+        setFileName("示例数据（离线）");
+        setBackendOk(false);
+        setStatus({ msg: "未连接后端，已切换离线演示模式（前端算法）", kind: "" });
+      });
   }, []);
 
   const onAuth = (t: string, u: string) => {
@@ -83,28 +111,58 @@ export default function App() {
     localStorage.removeItem("cp_user");
   };
 
-  // ---- 单文件分析（REST，用于首次载入完整 x/y/y_proc） ----
+  // ---- 离线分析（无后端时在浏览器内直接算） ----
+  const runLocal = (lx: number[], ly: number[]) => {
+    const names = enabledNames();
+    if (!names.length) {
+      setStatus({ msg: "请至少选择一个算法", kind: "error" });
+      return;
+    }
+    const res = analyzeLocal(lx, ly, names, params);
+    setX(res.x);
+    setY(res.y);
+    setYProc(res.y_proc);
+    setPeaks(res.results);
+    const total = Object.values(res.results).reduce((s, p) => s + p.length, 0);
+    setStatus({ msg: `离线分析完成，共 ${total} 个峰`, kind: "ok" });
+  };
+
+  // ---- 单文件分析（有后端走 REST；无后端走本地） ----
   const analyzeFile = useCallback(
     async (file: File) => {
       setStatus({ msg: "分析中…", kind: "" });
       try {
-        const res = await api.analyze(file, enabledNames(), params, token);
-        setX(res.x);
-        setY(res.y);
-        setYProc(res.y_proc);
-        setPeaks(res.results);
-        setFileName(file.name);
-        setStatus({ msg: `已完成，共 ${Object.values(res.results).reduce((s, p) => s + p.length, 0)} 个峰`, kind: "ok" });
+        if (backendOk) {
+          const res = await api.analyze(file, enabledNames(), params, token);
+          setX(res.x);
+          setY(res.y);
+          setYProc(res.y_proc);
+          setPeaks(res.results);
+          setFileName(file.name);
+          setStatus({ msg: `已完成，共 ${Object.values(res.results).reduce((s, p) => s + p.length, 0)} 个峰`, kind: "ok" });
+        } else {
+          const { x: lx, y: ly } = await parseCsvFile(file);
+          if (!lx.length) {
+            setStatus({ msg: "CSV 解析失败：需要两列数值（x,y）", kind: "error" });
+            return;
+          }
+          setFileName(file.name);
+          runLocal(lx, ly);
+        }
       } catch (e: any) {
         setStatus({ msg: e.message || "分析失败", kind: "error" });
       }
     },
-    [enabled, params, token]
+    [backendOk, enabled, params, token]
   );
 
   // ---- WebSocket 流式实时预览（参数变动时边滑边出峰） ----
   const runLive = useCallback(() => {
     if (!x.length) return;
+    if (!backendOk) {
+      runLocal(x, y); // 离线模式：本地重算
+      return;
+    }
     if (typeof WebSocket === "undefined") return;
     try {
       const ws = new WebSocket(wsUrl());
@@ -138,7 +196,7 @@ export default function App() {
     } catch {
       setWsStatus("WS 不可用");
     }
-  }, [x, y, enabled, params]);
+  }, [x, y, enabled, params, backendOk]);
 
   // 参数变动 -> 250ms 防抖后流式重算
   const onParamChange = (name: string, key: string, value: any) => {
@@ -163,6 +221,11 @@ export default function App() {
   const onZipPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    if (backendOk !== true) {
+      setStatus({ msg: "离线模式下不支持 ZIP 批量（请连接后端，或单个上传 CSV）", kind: "error" });
+      e.target.value = "";
+      return;
+    }
     setStatus({ msg: "批量处理中…", kind: "" });
     try {
       const res = await api.analyzeBatch(f, enabledNames(), token);
@@ -255,6 +318,13 @@ export default function App() {
           <span className="hint">未登录（无法保存项目）</span>
         )}
       </div>
+
+      {backendOk === false && (
+        <div className="offline-banner">
+          ⚠ 未连接后端，已切换「离线演示模式」：分析在浏览器本地完成（可使用示例数据或上传 CSV）。
+          登录 / 保存项目 / ZIP 批量需自备 FastAPI 后端。
+        </div>
+      )}
 
       {!token && (
         <Auth onAuth={onAuth} />
