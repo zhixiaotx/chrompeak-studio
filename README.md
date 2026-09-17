@@ -152,6 +152,8 @@ npm install
 npm run dev        # 打开 http://localhost:5173
 ```
 
+> **离线也能用**：部署到纯静态平台（GitHub Pages / Cloudflare / Vercel / Netlify）时，前端在加载后端接口失败后会**自动切换「离线演示模式」**——用 TypeScript 实现的核心算法在浏览器里直接出峰（见 `web/frontend/src/analysis.ts`），并内置示例数据。因此页面打开即用、不会因请求不存在的后端而报 404/405。登录 / 保存项目 / ZIP 批量上传这几项功能仍需要自备 FastAPI 后端。
+
 **B. 完整运行（前端 + 后端 API + 登录/保存项目）：**
 
 ```bash
