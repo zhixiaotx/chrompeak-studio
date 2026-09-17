@@ -1,0 +1,33 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# PyInstaller 产物（体积大，按需重新构建）
+build/
+dist/
+*.spec
+build_desktop.log
+
+# ---- Node ----
+node_modules/
+web/frontend/dist/
+web/frontend/tsconfig.tsbuildinfo
+
+# ---- 运行时生成 ----
+web/backend/chrompeak.db
+web/backend/exports/*.csv
+sample_data/out/
+
+# ---- 系统/编辑器 ----
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
