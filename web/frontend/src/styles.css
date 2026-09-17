@@ -116,6 +116,9 @@ th { color: var(--muted); font-weight: 600; }
   line-height: 1.5;
 }
 
+.auth-card { margin-bottom: 12px; }
+.auth-card input:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 11px; margin-left: 6px; }
 

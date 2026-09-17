@@ -47,18 +47,59 @@ function authHeader(token: string | null | undefined): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** 后端不存在 / 不可达（静态托管下访问 /api 会得到 404/405 或 HTML 兜底页）。 */
+export class BackendUnavailableError extends Error {
+  status: number;
+  constructor(status: number, message?: string) {
+    super(message || `后端不可用（HTTP ${status}）`);
+    this.name = "BackendUnavailableError";
+    this.status = status;
+  }
+}
+
+/** 把各种失败响应翻译成人话，避免把整段 HTML 直接甩给用户。 */
+async function readableError(res: Response): Promise<string> {
+  const raw = await res.text().catch(() => "");
+  const text = raw.trim();
+  if (text.startsWith("<")) {
+    return `后端不可用（HTTP ${res.status}）：当前为纯静态部署，没有 FastAPI 服务`;
+  }
+  try {
+    const j = JSON.parse(text);
+    const d = j?.detail ?? j?.message;
+    if (d) return typeof d === "string" ? d : JSON.stringify(d);
+  } catch {
+    /* 非 JSON，按纯文本处理 */
+  }
+  return text || res.statusText || `HTTP ${res.status}`;
+}
+
 async function jsonFetch<T>(
   path: string,
   init?: RequestInit,
   token?: string | null
 ): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { ...(init?.headers || {}), ...authHeader(token) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: { ...(init?.headers || {}), ...authHeader(token) },
+    });
+  } catch (e: any) {
+    // 网络层失败（DNS/跨域/离线）同样视为后端不可用
+    throw new BackendUnavailableError(0, "无法连接后端服务");
+  }
   if (!res.ok) {
-    const msg = await res.text().catch(() => res.statusText);
-    throw new Error(`${res.status}: ${msg}`);
+    const msg = await readableError(res);
+    if (res.status === 404 || res.status === 405) {
+      throw new BackendUnavailableError(res.status, msg);
+    }
+    throw new Error(msg);
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("json")) {
+    // 静态兜底页冒充成功响应的情况，一并归为后端不可用
+    throw new BackendUnavailableError(res.status, "后端返回了非 JSON 响应");
   }
   return res.json() as Promise<T>;
 }

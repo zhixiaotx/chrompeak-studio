@@ -48,6 +48,7 @@ export default function App() {
   const [batchUrl, setBatchUrl] = useState("");
   const [projectId, setProjectId] = useState<number | null>(null);
   const [backendOk, setBackendOk] = useState<boolean | null>(null); // null=检测中, true=连上, false=离线
+  const [showAuth, setShowAuth] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const debounceRef = useRef<number | null>(null);
@@ -101,6 +102,7 @@ export default function App() {
   const onAuth = (t: string, u: string) => {
     setToken(t);
     setUsername(u);
+    setShowAuth(false);
     setStatus({ msg: `欢迎，${u}`, kind: "ok" });
   };
 
@@ -150,6 +152,19 @@ export default function App() {
           runLocal(lx, ly);
         }
       } catch (e: any) {
+        // 后端中途失联：自动降级为离线本地分析
+        if (e?.name === "BackendUnavailableError") {
+          setBackendOk(false);
+          try {
+            const { x: lx, y: ly } = await parseCsvFile(file);
+            setFileName(file.name);
+            runLocal(lx, ly);
+            return;
+          } catch {
+            setStatus({ msg: "后端不可用，且 CSV 解析失败", kind: "error" });
+            return;
+          }
+        }
         setStatus({ msg: e.message || "分析失败", kind: "error" });
       }
     },
@@ -314,8 +329,12 @@ export default function App() {
             <span className="user">{username}</span>
             <button className="ghost" onClick={logout}>退出</button>
           </>
+        ) : backendOk === false ? (
+          <span className="hint">离线模式 · 无需登录</span>
         ) : (
-          <span className="hint">未登录（无法保存项目）</span>
+          <button className="ghost" onClick={() => setShowAuth((v) => !v)}>
+            {showAuth ? "收起登录" : "登录 / 注册"}
+          </button>
         )}
       </div>
 
@@ -326,22 +345,35 @@ export default function App() {
         </div>
       )}
 
-      {!token && (
-        <Auth onAuth={onAuth} />
-      )}
+      <div className="layout">
+        <div className="sidebar">
+          {!token && showAuth && (
+            <Auth
+              onAuth={onAuth}
+              disabled={backendOk === false}
+              onClose={() => setShowAuth(false)}
+            />
+          )}
 
-      {token && (
-        <div className="layout">
-          <div className="sidebar">
-            <div className="card">
+          <div className="card">
               <h3>数据</h3>
               <div className="row">
                 <input type="file" accept=".csv,.txt" onChange={onFilePick} />
               </div>
               <div className="row" style={{ marginTop: 8 }}>
-                <label className="ghost" style={{ flex: 1 }}>
+                <label
+                  className="ghost"
+                  style={{ flex: 1, opacity: backendOk === true ? 1 : 0.45 }}
+                  title={backendOk === true ? "" : "离线模式不支持，需连接后端"}
+                >
                   ZIP 批量
-                  <input type="file" accept=".zip" onChange={onZipPick} style={{ marginTop: 4 }} />
+                  <input
+                    type="file"
+                    accept=".zip"
+                    onChange={onZipPick}
+                    disabled={backendOk !== true}
+                    style={{ marginTop: 4 }}
+                  />
                 </label>
               </div>
               {batchUrl && (
@@ -355,7 +387,14 @@ export default function App() {
                   导入 JSON
                   <input type="file" accept=".json" onChange={importJSON} style={{ display: "none" }} />
                 </label>
-                <button className="secondary" onClick={saveProject}>保存项目</button>
+                <button
+                  className="secondary"
+                  onClick={saveProject}
+                  disabled={backendOk !== true}
+                  title={backendOk === true ? "" : "离线模式不支持保存项目"}
+                >
+                  保存项目
+                </button>
               </div>
               {fileName && <div className="hint" style={{ marginTop: 6 }}>当前：{fileName}{projectId ? ` · #${projectId}` : ""}</div>}
             </div>
@@ -370,7 +409,9 @@ export default function App() {
                 onParamChange={onParamChange}
               />
               <div className="hint" style={{ marginTop: 8 }}>
-                调整参数会在 250ms 后触发 WebSocket 流式重算（边滑边出峰）。
+                {backendOk === true
+                  ? "调整参数会在 250ms 后触发 WebSocket 流式重算（边滑边出峰）。"
+                  : "调整参数会在 250ms 后在浏览器本地重算（离线模式）。"}
               </div>
             </div>
           </div>
@@ -388,8 +429,7 @@ export default function App() {
               <ResultTable peaks={flatPeaks} />
             </div>
           </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
