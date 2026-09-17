@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# SPA 回退：所有未知路径都返回 index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
