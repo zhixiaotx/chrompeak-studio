@@ -1,0 +1,10 @@
+# Desktop (PyQt6) dependencies
+PyQt6>=6.6
+pyqtgraph>=0.13
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+PyWavelets  # optional (CWT uses a manual implementation, no hard dependency)
+onnxruntime>=1.16
+openpyxl>=3.1
+PyInstaller>=6.0
