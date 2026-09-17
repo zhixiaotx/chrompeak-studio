@@ -118,8 +118,9 @@ chrompeak-studio/
 │       ├── src/
 │       │   ├── App.tsx       # 主页面与交互逻辑
 │       │   ├── api.ts        # 后端通信封装
+│       │   ├── analysis.ts   # 前端离线算法引擎（无后端时在浏览器出峰）
 │       │   ├── components/   # 图表、参数面板、结果表、登录
-│       │   ├── utils/lttb.ts # 大数据降采样
+│       │   ├── utils/        # lttb 降采样 / ZIP 批量 / 本地项目仓库
 │       │   └── styles.css    # 样式与移动端适配
 │       ├── index.html
 │       ├── vite.config.ts    # 构建配置（base: "./" 相对路径）
@@ -152,7 +153,16 @@ npm install
 npm run dev        # 打开 http://localhost:5173
 ```
 
-> **离线也能用**：部署到纯静态平台（GitHub Pages / Cloudflare / Vercel / Netlify）时，前端在加载后端接口失败后会**自动切换「离线演示模式」**——用 TypeScript 实现的核心算法在浏览器里直接出峰（见 `web/frontend/src/analysis.ts`），并内置示例数据。因此页面打开即用、不会因请求不存在的后端而报 404/405。登录 / 保存项目 / ZIP 批量上传这几项功能仍需要自备 FastAPI 后端。
+### 🌐 在线演示（直接体验，无需安装）
+
+**<https://zhixiaotx.github.io/chrompeak-studio/>**
+
+打开即用，**不需要登录、不需要后端**。页面会自动检测后端是否可用：
+
+- **有后端** → 走 FastAPI，支持注册/登录、云端保存项目、后端 ZIP 批量；
+- **无后端**（如 GitHub Pages 这种纯静态托管）→ 自动切换**离线模式**，顶部出现黄色提示条，算法在浏览器本地跑，连「保存项目」「ZIP 批量」也能用（分别落到浏览器 localStorage 和本地打 ZIP 下载）。
+
+> **离线也能用**：部署到纯静态平台（GitHub Pages / Cloudflare / Vercel / Netlify）时，前端在加载后端接口失败后会**自动切换「离线演示模式」**——用 TypeScript 实现的核心算法在浏览器里直接出峰（见 `web/frontend/src/analysis.ts`），并内置示例数据。离线模式下**免登录**，除注册/登录、云端保存外其余功能全部可用（分析、JSON 导入导出、本地 ZIP 批量、本地保存项目）。也因此不会因请求不存在的后端而报 404/405。
 
 **B. 完整运行（前端 + 后端 API + 登录/保存项目）：**
 
@@ -273,16 +283,19 @@ python desktop/build_desktop.py
 | --- | --- |
 | `index.html` | 应用入口 HTML，`<div id="root">` 挂载点；引入 `./assets/...`（**相对路径**，便于部署到子目录） |
 | `vite.config.ts` | Vite 配置：`base: "./"`（构建产物全部用相对路径）、`/api` 代理到 `localhost:8000`（本地开发免跨域）、`chunkSizeWarningLimit` 放宽 |
-| `package.json` | 依赖与脚本：`dev` / `build` / `preview`。依赖仅 `react`、`react-dom`、`uplot` |
+| `package.json` | 依赖与脚本：`dev` / `build` / `preview`。运行时依赖仅 4 个：`react`、`react-dom`、`uplot`、`jszip`（`jszip` 用于**离线 ZIP 批量**在浏览器里读写压缩包） |
 | `src/main.tsx` | React 渲染入口 |
-| `src/App.tsx` | **主页面与全部交互**：文件上传、参数调优后 **250ms 防抖 + WebSocket 流式重算**（边滑边出峰）、项目保存/加载、JSON 导入导出、ZIP 批量。是前端逻辑核心 |
-| `src/api.ts` | **后端通信封装**：`API_BASE`（优先读 `VITE_API_BASE`，否则 `/api`）、`api` 对象（register/login/algorithms/analyze/analyzeBatch/projects）、`wsUrl()` 生成 WebSocket 地址。集中所有请求，改地址只动这一处 |
-| `src/components/Chromatogram.tsx` | **色谱图组件**（uPlot）：每个算法一个彩色散点序列（`ALG_COLORS`），用 LTTB 降采样保证大文件流畅，`ResizeObserver` 跟随容器宽度自适应；序列数量变化时重建图表 |
-| `src/components/AlgorithmPanel.tsx` | 算法开关 + 参数表单（复用 `ParamSpec`） |
-| `src/components/ResultTable.tsx` | 结果表：列出所有算法的峰（rt / height / area / fwhm 等） |
-| `src/components/Auth.tsx` | 登录/注册表单 |
+| `src/App.tsx` | **主页面与全部交互**：后端可达性探测（`backendOk` 三态：检测中 / 在线 / 离线）、文件上传、参数调优后 **250ms 防抖**重算（在线走 WebSocket 流式，离线走本地引擎）、项目保存/加载、JSON 导入导出、ZIP 批量、本地项目列表。**主界面无需登录即可使用**；登录只是侧边栏里一张可折叠卡片 |
+| `src/analysis.ts` | **离线算法引擎（TypeScript 版）**：无后端时在浏览器里跑完 6 种算法并出峰。内含基线估计、均值/高斯平滑、差分高斯（近似墨西哥帽小波）、形态学顶帽、FWHM/面积/不对称因子计算；对外导出 `analyzeLocal`、`preprocessForDisplay`、`parseCsvText`/`parseCsvFile`、`syntheticChromatogram`（示例数据）、`LOCAL_ALGORITHMS`（与后端一致的算法元信息）。**纯前端、零请求、可在任何静态托管上运行** |
+| `src/api.ts` | **后端通信封装**：`API_BASE`（优先读 `VITE_API_BASE`，否则 `/api`）、`api` 对象（register/login/algorithms/analyze/analyzeBatch/projects）、`wsUrl()` 生成 WebSocket 地址。新增 `BackendUnavailableError` + `readableError()`：把静态托管返回的 404/405 HTML 兜底页翻译成可读中文错误，App 据此判定"后端不存在"。集中所有请求，改地址只动这一处 |
+| `src/utils/localProjects.ts` | **本地项目仓库**：离线模式下的「保存项目」。把 `name / algorithms / params / x / y / results` 存进 `localStorage`，支持列出、读取、删除、改名；写入超限时自动丢弃最旧项目，避免 `QuotaExceededError` |
+| `src/utils/localBatch.ts` | **离线 ZIP 批量**：用 `jszip` 在浏览器里解压上传的 ZIP → 逐个 CSV 走本地引擎出峰 → 汇总 `summary.csv` + 每个文件一个 `peaks/xxx_peaks.csv` → 再打包成新 ZIP 下载。每处理完一个文件 `setTimeout(0)` 让出主线程，避免大数据量时页面假死 |
 | `src/utils/lttb.ts` | **LTTB 降采样算法**：把上万点的曲线压缩到屏幕宽度的 2 倍点数，保留视觉形状 |
-| `src/styles.css` | 全部样式（深色主题 CSS 变量）+ **移动端适配**（`@media` 断点，见下文） |
+| `src/components/Chromatogram.tsx` | **色谱图组件**（uPlot）：每个算法一个彩色散点序列（`ALG_COLORS`），用 LTTB 降采样保证大文件流畅，`ResizeObserver` 跟随容器宽度自适应；序列数量变化时重建图表，否则只 `setData` 增量更新 |
+| `src/components/AlgorithmPanel.tsx` | 算法开关 + 参数表单（复用 `ParamSpec` 自动生成滑块，免登录即用） |
+| `src/components/ResultTable.tsx` | 结果表：列出所有算法的峰（rt / height / area / fwhm 等） |
+| `src/components/Auth.tsx` | 登录/注册表单。**离线模式（`disabled`）下输入框与按钮全部禁用**，并提示"离线演示模式下无需登录"，从源头避免向不存在的后端发 POST 而报 405 |
+| `src/styles.css` | 全部样式（深色主题 CSS 变量）+ **移动端适配**（`@media` 断点，见下文），另含 `.offline-banner`（离线提示条）、`.auth-card`、`.proj-list`（本地项目列表） |
 | `src/vite-env.d.ts` | 声明 `vite/client` 类型，使 `import.meta.env` 可用 |
 | `public/404.html` | SPA 兜底页（刷新深层链接时不 404） |
 | `vercel.json` / `netlify.toml` / `wrangler.toml` | 三大平台的部署配置（重写到 `index.html`，启用 SPA） |
@@ -347,7 +360,7 @@ npm run build      # 产物在 web/frontend/dist
 
 ### 1. GitHub Pages（自动化，推荐）
 
-仓库已包含 `.github/workflows/deploy.yml`，**推送到 `main` 分支即自动构建并发布到 `gh-pages` 分支**：
+仓库已包含 `.github/workflows/deploy.yml`，**推送到 `main` 分支即自动构建并发布到 `gh-pages` 分支**（底层用的就是上面那条 `subtree` 命令，全自动、带 `--force` 覆写）：
 
 ```bash
 git add . && git commit -m "feat: 更新 ChromaPeak Studio"
@@ -357,6 +370,25 @@ git push origin main
 然后在 GitHub 仓库 **Settings → Pages → Source** 选择 `gh-pages` 分支、`/ (root)`，保存后访问 `https://<用户名>.github.io/<仓库名>/`。
 
 > 因为用了相对路径 `base: "./"`，子路径部署无需额外配置。
+> 推送后到仓库 **Actions** 页看运行是否变绿；首次发布要等 1~2 分钟缓存生效。
+
+**如果仓库没开 Actions，或想本地手动发布**，可手工执行等价操作：
+
+```bash
+# 1) 先构建
+cd web/frontend
+npm install
+npm run build
+
+# 2) 把 dist 作为 gh-pages 分支推送（任选其一）
+npx gh-pages -d dist                       # 方式 A：用 gh-pages 包，最省事
+# git subtree push --prefix dist origin gh-pages   # 方式 B：原生 git
+
+# 3) 首次需启用 Pages
+gh api -X POST /repos/<owner>/<repo>/pages -F "source[branch]=gh-pages" -F "source[path]=/"
+```
+
+> 注意：GitHub Pages 默认启用 Jekyll，会忽略以 `_` 开头的目录/文件。dist 里若带 `_` 前缀资源，需要放一个空的 `.nojekyll`（本仓库工作流已自动创建）。
 
 ### 2. Cloudflare Pages
 
@@ -455,12 +487,84 @@ git push origin main
 - **现象**：双击 `.exe` 报 `ModuleNotFoundError: core`。
 - **解决**：`build_desktop.py` 通过 `--add-data` 把 `core` 和 `models` 目录打进包，并配合 `sys._MEIPASS` 在运行时定位；后端 `main.py` 也通过 `sys.path.insert(0, ROOT)` 把项目根加入搜索路径。打包时这两个目录必须一起带上。
 
+### 11. 静态托管上 **POST 一定会 405**（本项目真实踩过）
+- **现象**：前端部署到 GitHub Pages 后，`GET /api/algorithms` 返回 **404**，`POST /api/analyze` 返回 **405 Method Not Allowed**；页面一加载就报错，而且错误信息是一整段 HTML。
+- **原因**：静态托管（GitHub Pages / Vercel / Netlify / Cloudflare Pages）**只会返回文件，不会执行你的后端**。`GET` 命中 SPA 兜底页后按 404 返回，`POST` 压根不支持 → 405。更糟的是原来的错误处理直接把响应体 `res.text()` 抛给用户，于是满屏 HTML。
+- **解决**（三层防护）：
+  1. `src/api.ts`：新增 `BackendUnavailableError` 与 `readableError()`，识别「HTML 响应 / 404 / 405 / content-type 不是 JSON」四种情况，统一翻译成中文可读提示；`fetch` 本身抛错（DNS、离线、跨域）也归为同一类异常。
+  2. `src/App.tsx`：启动时探测 `GET /api/algorithms`，失败即把 `backendOk` 置为 `false` 并切「离线演示模式」，之后**完全不再请求 `/api`**。
+  3. `src/components/Auth.tsx`：离线模式把登录表单 `disabled`，从源头堵住「用户点提交 → POST → 405」。
+- **附带细节**：健康检查**用 GET 而不是 HEAD**——不少静态主机/网关不支持 HEAD，会让你误判成"后端挂了"。
+- **教训**：静态托管 ≠ 有服务器。**任何会发请求的 UI，都必须定义"后端不存在"时的行为。**
+
+### 12. 把主界面用 `{token && ...}` 包起来 = 登录墙死锁
+- **现象**：修完 405 后页面能开了，但只能看到一个登录框，图表和算法面板全都不见；离线模式下登录永远不可能成功，于是永远进不了主界面。
+- **原因**：JSX 里写成 `{token && (<div className="layout">…主界面…</div>)}`，把整个主界面当成了"登录后才有的东西"。
+- **解决**：主界面**无条件渲染**；登录降级为侧边栏里一张可折叠卡片（`showAuth` 控制），只在真正需要云端能力时才用。原则是：**先让用户看到东西、能用起来，再谈账号体系**。
+- **同一批改掉的**：多余的 `/>` 自闭合标签导致 JSX 不平衡、`tsc` 直接编译失败；`<input type="file">` 选**同一个文件第二次不触发 `onChange`**，每次处理完必须 `e.target.value = ""` 复位。
+
+### 13. `useEffect` 依赖里放对象/数组 → 图表闪个不停
+- **现象**：上传 CSV 后 uPlot 图表持续闪烁，停不下来。
+- **原因**：依赖数组里放了 `[x, y, yProc, peaks]` 这类**每次渲染都是新引用**的对象/数组，effect 每次都重跑 → 不停调 `setData` → 不停重绘。
+- **解决**：把"重建"和"更新"彻底分开——
+  - **只有序列数量变化**（勾选/取消勾选算法）时才 `destroy()` 后重建；
+  - 其余一律走 `p.setData(data)` 增量更新，**绝不重建**；
+  - `ResizeObserver` 里加**宽度阈值判断**（差值小于几像素就跳过）+ `requestAnimationFrame` 节流，切断 "resize → setSize → 再次触发 resize" 的死循环。
+
+### 14. uPlot 的 `AlignedData` 要求每条序列长度严格一致
+- **现象**：换一个长度不同的数据文件后，曲线断裂、错位，或旧峰粘在新图上。
+- **原因**：峰标注序列是按 `x.length` 拼进去的，x 长度变化时旧序列长度跟不上就错位。
+- **解决**：每次都按当前 `x.length` **重建全部序列数组**（`new Array(n).fill(null)`），保证长度对齐；`destroy()` 之后务必 `plotRef.current = null`，避免重复销毁报错。
+
+### 15. 相对路径 `base: "./"` 是子路径部署的生命线
+- **现象**：部署到 `用户名.github.io/仓库名` 后白屏，控制台一堆 404。
+- **原因**：默认 `base: "/"` 会让 `index.html` 引用 `/assets/xxx.js`（**绝对路径**），而资源实际在 `/仓库名/assets/xxx.js`。
+- **解决**：`vite.config.ts` 里设 **`base: "./"`**，构建产物全部用相对路径。**这是本项目能一键部署到四个平台的前提。**
+
+### 16. `--add-data` 的路径分隔符写错，打包数据就没进去
+- **现象**：明明加了 `--add-data`，exe 里还是找不到 `core` / `models`。
+- **原因**：格式是 `源路径<分隔符>目标名`，**Windows 用 `;`，Linux/macOS 用 `:`**，写反了会被当成路径的一部分。
+- **解决**：用 `os.pathsep` 自动适配（`desktop/build_desktop.py` 里的 `SEP`），别手写。
+
+### 17. 动态注册的算法，PyInstaller 静态扫描不到
+- **现象**：源码里 6 种算法跑得好好的，打包后只剩一两种，或报 `ModuleNotFoundError: core.algorithms.xxx`。
+- **原因**：`core/algorithms/__init__.py` 是**注册表 + 动态导入**，静态分析扫不到这些子模块。
+- **解决**：显式加 `--collect-all core`（连同 `pyqtgraph`、`onnxruntime`），并用 `--hidden-import` 补 `scipy.special._ufuncs_cxx` 这类 C 扩展。**凡是运行时才按名字导入的模块，都必须显式声明。**
+
+### 18. `--onedir` 还是 `--onefile`
+- **现象**：换 `--onefile` 后启动明显变慢（每次运行都要把整个包解压到临时目录）。
+- **解决**：本项目默认 `--onedir`，产出 `dist/ChromaPeakStudio/` 文件夹，**分发时把整个文件夹压缩打包即可**，换来秒开和易排查。
+
+### 19. Vite 命令行里 `--` 分隔符：多了少了都不行
+- `vite --host --port 5180` 正常；
+- 写成 `vite -- --host`（多了个 `--`）会把 `--host` 当成位置参数；
+- 想传 `-c xxx.js` 这种带短横线的参数，必须放在 `--` 之前：`vite -c vite.config.smoke.ts`。
+
+### 20. GitHub Pages：先有 `gh-pages` 分支，才能启用 Pages
+顺序很重要，反了会 404：
+1. 先构建并推出 `gh-pages` 分支（`git subtree push --prefix web/frontend/dist origin gh-pages`，或直接用仓库自带的 GitHub Actions）；
+2. 再到仓库 **Settings → Pages → Source** 选 `gh-pages` 分支 + `/ (root)`；
+3. 等 1~2 分钟再刷新。
+
+> 另外：GitHub Pages 默认启用 Jekyll，会忽略 `_` 开头的文件/目录，所以工作流里要生成一个空 `.nojekyll`。
+
+
 ---
 
 ## 常见问题 FAQ
 
 **Q：没有后端能用 Web 端吗？**
-A：能。前端本身内置示例数据和算法对比逻辑，不连后端也能看效果。只是"保存项目""登录"需要后端。
+A：能，而且**不需要登录**。前端内置了一套完整的 **TypeScript 离线算法引擎**（`src/analysis.ts`）和示例数据，部署到任何静态托管后打开即用，不会报 404/405。离线模式下除了「注册/登录、云端保存项目」这两项必须有后端之外，其余功能全部可用：
+
+| 功能 | 离线模式 | 说明 |
+| --- | --- | --- |
+| 上传 CSV 分析、6 算法对比、参数实时调优 | ✅ | 在浏览器本地完成 |
+| 导出 / 导入项目 JSON | ✅ | 纯前端 Blob 下载 |
+| ZIP 批量处理 | ✅ | 用 `jszip` 在浏览器解压 → 出峰 → 打包下载 |
+| 保存项目 | ✅ | 存到浏览器 `localStorage`（侧栏「本地项目」可载入/删除） |
+| 注册 / 登录、云端保存项目 | ❌ | 需要自备 FastAPI 后端 |
+
+现成的在线演示（GitHub Pages，纯静态）：<https://zhixiaotx.github.io/chrompeak-studio/>
 
 **Q：CSV 应该是什么格式？**
 A：两列数值，第一行可以是表头（程序会自动跳过非数字行）。第一列是 `x`（时间/索引），第二列是 `y`（响应值）。
