@@ -186,7 +186,7 @@ class AlgRow(QFrame):
         self.res_lbl = QLabel("待执行")
         self.res_lbl.setStyleSheet(
             "color: #8b949e; font-family: Consolas, monospace; font-size: 10px;")
-        self.res_lbl.setFixedWidth(76)
+        self.res_lbl.setFixedWidth(92)
         self.res_lbl.setAlignment(Qt.AlignmentFlag.AlignRight
                                   | Qt.AlignmentFlag.AlignVCenter)
         h.addWidget(self.res_lbl)
@@ -223,8 +223,16 @@ class AlgRow(QFrame):
         else:
             self.param_panel.setVisible(True)
 
-    def set_result(self, text: str, ok: bool | None):
+    def set_result(self, text: str, ok: bool | None, stale: bool = False):
         color = "#3fb950" if ok else "#f85149" if ok is False else "#8b949e"
+        if stale:
+            color = "#d29922"
+            text = "⟳ " + text
+            self.res_lbl.setToolTip(
+                "该算法结果是在上一轮预处理参数下算出的，尚未跟随更新 —— "
+                "按 F5 或点侧栏「运行全部」重算")
+        else:
+            self.res_lbl.setToolTip("")
         self.res_lbl.setText(text)
         self.res_lbl.setStyleSheet(
             f"color: {color}; font-family: Consolas, monospace; font-size: 10px;")
@@ -402,16 +410,25 @@ class MainWindow(QMainWindow):
         self.peak_search.setMaximumWidth(240)
         self.peak_search.textChanged.connect(lambda _t: self.refill_peak_table())
         bh.addWidget(self.peak_search)
+        self.only_consensus = QCheckBox("仅共识峰")
+        self.only_consensus.setToolTip(
+            "只显示被 ≥2 个算法共同检出的峰 —— 用来快速判断是否过检")
+        self.only_consensus.stateChanged.connect(
+            lambda _s: self.refill_peak_table())
+        bh.addWidget(self.only_consensus)
         bh.addStretch(1)
         self.peak_count_lbl = QLabel("共 0 个峰")
         self.peak_count_lbl.setObjectName("Hint")
         bh.addWidget(self.peak_count_lbl)
         pv.addWidget(bar)
 
-        self.peak_table = QTableWidget(0, 11)
+        self.peak_table = QTableWidget(0, 12)
         self.peak_table.setHorizontalHeaderLabels(
             ["序号", "保留时间/min", "最小值/min", "峰高", "峰面积", "峰宽",
-             "分离度 w/s", "不对称因子", "置信度", "来源算法", "标记"])
+             "分离度 w/s", "不对称因子", "置信度", "共识", "来源算法", "算法实例"])
+        self.peak_table.horizontalHeaderItem(9).setToolTip(
+            "该保留时间上被多少个算法共同检出（≥2 视为共识峰，=1 属单算法孤峰，"
+            "过检时优先怀疑）")
         self.peak_table.verticalHeader().setVisible(False)
         self.peak_table.setAlternatingRowColors(True)
         self.peak_table.setSelectionBehavior(
@@ -477,8 +494,11 @@ class MainWindow(QMainWindow):
         self.panel_title.setStyleSheet("font-weight: 600;")
         hh.addWidget(self.panel_title)
         hh.addStretch(1)
-        self.panel_action = QPushButton("运行")
+        self.panel_action = QPushButton("运行全部")
         self.panel_action.setObjectName("Link")
+        self.panel_action.setToolTip(
+            "运行侧栏中所有已勾选的算法（F5）。只点某一行的「执行」时，"
+            "其余算法会停留在「待执行」，此时峰表里没有它们的峰。")
         self.panel_action.clicked.connect(self.run_all)
         hh.addWidget(self.panel_action)
         head.setStyleSheet("border-bottom: 1px solid #2f353d;")
@@ -1068,6 +1088,11 @@ class MainWindow(QMainWindow):
         self.baseline = np.asarray(one["baseline"])
         self.results[name] = one["peaks"]
         self.stats[name] = {"peaks": len(one["peaks"]), "ms": ms, "ok": True}
+        # 单跑一个算法时，其余算法的既有结果没跟着这次预处理参数重算 → 标灰待更新，
+        # 避免峰表里混着新旧两套结果却看不出来
+        for k in list(self.stats):
+            if k != name:
+                self.stats[k] = dict(self.stats[k], stale=True)
         self.last_ms = ms
         self._sync_alg_results()
         self.redraw()
@@ -1077,6 +1102,11 @@ class MainWindow(QMainWindow):
         self._update_status()
         self.log(f"{T.alg_visual(name)[0]} 单独执行 → {len(one['peaks'])} 个峰"
                  f"（{ms:.0f} ms）", "ok")
+        pending = [a for a in self._checked_algorithms() if a not in self.stats]
+        if pending:
+            self.log(f"已勾选但未执行：{len(pending)} 个算法"
+                     f"（{', '.join(T.alg_visual(a)[0] for a in pending)}）"
+                     f" — 峰表里没有它们的峰，按 F5 可全部运行", "warn")
 
     def _sync_alg_results(self):
         for name, row in self._rows.items():
@@ -1084,7 +1114,8 @@ class MainWindow(QMainWindow):
             if st is None:
                 row.set_result("待执行" if self._enabled.get(name) else "未启用", None)
             elif st["ok"]:
-                row.set_result(f"{st['peaks']} 峰 | {st['ms']:.0f} ms", True)
+                row.set_result(f"{st['peaks']} 峰 | {st['ms']:.0f} ms", True,
+                               stale=bool(st.get("stale")))
             else:
                 row.set_result("失败", False)
         self.refill_compare()
@@ -1240,6 +1271,8 @@ class MainWindow(QMainWindow):
         groups: dict[str, list[dict]] = {}
         for p in allp:
             groups.setdefault(p["algorithm"], []).append(p)
+        n_alg = max(1, len(groups))
+        cons = self._consensus_map()
 
         prepared = []
         for alg, ps in groups.items():
@@ -1254,14 +1287,23 @@ class MainWindow(QMainWindow):
                 prepared.append((p, alg, i + 1, res))
         prepared.sort(key=lambda t: (t[0]["rt"], t[1]))
 
-        rows = []
-        for no, (p, alg, alg_no, res) in enumerate(prepared, start=1):
+        # 先过滤、后编号：序号始终是 1..N 连续，不会因筛选出现跳号
+        kept = []
+        for p, alg, alg_no, res in prepared:
             code, label, _c = T.alg_visual(alg)
             if src != "全部来源" and alg != src:
                 continue
             if q and q not in f"{p['rt']:.4f}" and q not in code.lower() \
                     and q not in label.lower():
                 continue
+            c_n = cons.get((alg, p["index"]), 1)
+            if self.only_consensus.isChecked() and c_n < 2:
+                continue
+            kept.append((p, alg, alg_no, res, c_n))
+
+        rows = []
+        for no, (p, alg, alg_no, res, c_n) in enumerate(kept, start=1):
+            code, label, _c = T.alg_visual(alg)
             li = int(p.get("left", -1))
             ri = int(p.get("right", -1))
             x0 = float(x[li]) if 0 <= li < len(x) else p["rt"]
@@ -1270,7 +1312,8 @@ class MainWindow(QMainWindow):
                 str(no), f"{p['rt']:.4f}", f"{x0:.4f}", f"{p['height']:.4f}",
                 f"{p['area']:.4f}", f"{x1 - x0:.4f}",
                 "—" if res is None else f"{res:.3f}",
-                f"{p['asymmetry']:.3f}", f"{p['score']:.2f}", code,
+                f"{p['asymmetry']:.3f}", f"{p['score']:.2f}",
+                f"{c_n}/{n_alg}", code,
                 f"{label.split('（')[0]} #{alg_no}",
             ])
 
@@ -1278,12 +1321,46 @@ class MainWindow(QMainWindow):
         for r, row in enumerate(rows):
             for c, val in enumerate(row):
                 item = QTableWidgetItem(val)
-                if c in (1, 2, 3, 4, 5, 6, 7, 8):
+                if c in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight
                                           | Qt.AlignmentFlag.AlignVCenter)
+                if c == 9:
+                    cn = int(row[9].split("/")[0])
+                    item.setForeground(QColor(T.OK if cn >= 2 else T.TEXT_DIM))
                 self.peak_table.setItem(r, c, item)
-        self.peak_count_lbl.setText(f"共 {len(rows)} / {len(allp)} 个峰")
-        self.sb_peak.setText(f"峰数：{len(allp)}")
+        n_cons = sum(1 for p in allp if cons.get(
+            (p["algorithm"], p["index"]), 1) >= 2)
+        self.peak_count_lbl.setText(
+            f"共 {len(rows)} / {len(allp)} 个峰　·　共识峰行 {n_cons}")
+        self.sb_peak.setText(f"峰数：{len(allp)}（共识 {n_cons}）")
+
+    def _consensus_map(self) -> dict:
+        """``(algorithm, index)`` → 该保留时间簇上共同检出的算法数（共识度）。
+
+        与 :meth:`_clusters` 用同一套容差与相邻聚合规则，保证「共识」列和
+        「结果」页的簇统计口径一致。
+        """
+        if self.x is None or len(self.x) == 0:
+            return {}
+        tol = max((float(self.x[-1]) - float(self.x[0])) * 0.004, 1e-9)
+        peaks = sorted(self._all_peaks(), key=lambda d: d["rt"])
+        out: dict = {}
+        group: list[dict] = []
+
+        def flush(g: list[dict]):
+            if not g:
+                return
+            n = len({p["algorithm"] for p in g})
+            for p in g:
+                out[(p["algorithm"], p["index"])] = n
+
+        for p in peaks:
+            if group and abs(p["rt"] - group[-1]["rt"]) > tol:
+                flush(group)
+                group = []
+            group.append(p)
+        flush(group)
+        return out
 
     def _clusters(self) -> list[dict]:
         if self.x is None or len(self.x) == 0:
@@ -1387,7 +1464,12 @@ class MainWindow(QMainWindow):
         self.sb_pts.setText(f"点数：{n}")
         self.sb_dt.setText(f"采样间隔：{dt:.4f}" if n > 1 else "采样间隔：—")
         self.sb_alg.setText(f"算法：{len(self._checked_algorithms())}")
-        self.sb_peak.setText(f"峰数：{len(self._all_peaks())}")
+        cons = self._consensus_map()
+        n_cons = sum(1 for p in self._all_peaks()
+                     if cons.get((p["algorithm"], p["index"]), 1) >= 2)
+        self.sb_peak.setText(
+            f"峰数：{len(self._all_peaks())}（共识 {n_cons}）" if n_cons
+            else f"峰数：{len(self._all_peaks())}")
         self.sb_ms.setText("耗时：—" if self.last_ms is None
                            else f"耗时：{self.last_ms:.0f} ms")
 
