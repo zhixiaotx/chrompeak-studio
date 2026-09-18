@@ -19,6 +19,28 @@ def enforce_min_distance(indices: List[int], y: np.ndarray,
     return sorted(kept)
 
 
+def dedup_identical_peaks(peaks: List) -> List:
+    """Drop peaks that resolved to the *same apex sample* (one peak counted twice).
+
+    ``refine_apex`` can map two neighbouring candidates onto the identical local
+    maximum; depending on the algorithm this leaks two rows with the same
+    retention time into the peak table. Only that certain case is removed —
+    genuinely adjacent or partially overlapping peaks are left untouched, so
+    resolved shoulders survive.
+
+    Keeps the taller peak of each colliding group.
+    """
+    if len(peaks) < 2:
+        return list(peaks)
+    best: dict = {}
+    for pk in peaks:
+        key = int(pk.index)
+        cur = best.get(key)
+        if cur is None or float(pk.height) > float(cur.height):
+            best[key] = pk
+    return sorted(best.values(), key=lambda p: float(p.rt))
+
+
 def refine_apex(y: np.ndarray, i: int, window: int = 3) -> int:
     """Return the local-maximum index near ``i`` within ``window``."""
     lo = max(0, i - window)

@@ -110,3 +110,54 @@ def test_calc_all_mutates():
     peaks = [Peak(index=100, rt=x[100], height=float(y[100]) - float(np.min(y)))]
     calc_all(x, y - np.min(y), peaks, 0.0)
     assert peaks[0].fwhm >= 0
+
+
+# --------------------------------------------------------------- 峰表去重护栏 --
+def test_dedup_drops_same_apex_keeps_taller():
+    """同一 apex 上落两条峰 = 一个峰被数了两次，只保留峰高较大的那条。"""
+    from core.algorithms._helpers import dedup_identical_peaks
+    from core.algorithms.base import Peak
+    peaks = [
+        Peak(index=10, rt=1.0, height=100.0),
+        Peak(index=10, rt=1.0, height=999.0),   # 同一采样点，更高
+        Peak(index=20, rt=2.0, height=50.0),
+    ]
+    out = dedup_identical_peaks(peaks)
+    assert len(out) == 2
+    assert [p.index for p in out] == [10, 20]
+    assert out[0].height == 999.0
+    assert [p.rt for p in out] == sorted(p.rt for p in out)
+
+
+def test_dedup_keeps_adjacent_shoulders():
+    """相邻但 apex 不同的峰（肩峰/未完全分离峰）必须原样保留。"""
+    from core.algorithms._helpers import dedup_identical_peaks
+    from core.algorithms.base import Peak
+    peaks = [Peak(index=10, rt=1.0, height=100.0),
+             Peak(index=11, rt=1.001, height=80.0)]
+    assert len(dedup_identical_peaks(peaks)) == 2
+
+
+def test_dedup_noop_on_small_and_empty():
+    from core.algorithms._helpers import dedup_identical_peaks
+    from core.algorithms.base import Peak
+    assert dedup_identical_peaks([]) == []
+    one = [Peak(index=5, rt=3.0, height=1.0)]
+    assert len(dedup_identical_peaks(one)) == 1
+
+
+def test_no_duplicate_rt_within_algorithm():
+    """回归：任何算法在默认参数下都不得输出两条保留时间相同的峰。"""
+    x, y = synthetic_chromatogram()
+    res = run_algorithms(x, y, algorithm_names())
+    for name, peaks in res["results"].items():
+        rts = [round(p["rt"], 6) for p in peaks]
+        assert len(set(rts)) == len(rts), f"{name} 输出重复保留时间：{rts}"
+
+
+def test_analyze_dedups_too():
+    """单算法路径（analyze）也必须走同一道去重护栏。"""
+    x, y = synthetic_chromatogram()
+    peaks = analyze(x, y, "ALG-D")["peaks"]
+    rts = [round(p["rt"], 6) for p in peaks]
+    assert len(set(rts)) == len(rts), f"analyze 输出重复保留时间：{rts}"

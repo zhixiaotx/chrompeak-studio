@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from .algorithms import (algorithm_meta, all_algorithms, get_algorithm)
+from .algorithms._helpers import dedup_identical_peaks
 from .peak_params import calc_all
 from .preprocess import PreprocessOptions, preprocess
 
@@ -25,7 +26,7 @@ def analyze(x: np.ndarray, y: np.ndarray, algorithm: str,
     opts = PreprocessOptions.from_dict(preprocess_opts)
     y_proc, baseline = preprocess(y, opts)
     alg = get_algorithm(algorithm)
-    peaks = alg.detect(x, y_proc, params or {})
+    peaks = dedup_identical_peaks(alg.detect(x, y_proc, params or {}))
     if compute_metrics:
         calc_all(x, y_proc, peaks, 0.0)
     return {
@@ -58,7 +59,7 @@ def run_algorithms(x: np.ndarray, y: np.ndarray,
     results: Dict[str, List[dict]] = {}
     for name in algorithms:
         alg = get_algorithm(name)
-        peaks = alg.detect(x, y_proc, params.get(name, {}))
+        peaks = dedup_identical_peaks(alg.detect(x, y_proc, params.get(name, {})))
         if compute_metrics:
             calc_all(x, y_proc, peaks, 0.0)
         results[name] = [pk.to_dict() for pk in peaks]
