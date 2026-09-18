@@ -367,6 +367,7 @@ python -m http.server 8000
 | 文件 | 作用 |
 | --- | --- |
 | `desktop/main_window.py` | **PyQt6 主窗口（工作站布局）**：顶栏菜单 + 品牌区、左图标栏、中央 pyqtgraph 色谱图（十字光标 + 可点选图例）、右侧 `QStackedWidget` 面板（算法/预处理/对比/日志/关于）、底部标签页（峰表/结果/文件信息）、状态栏。参数改动后 **200ms 防抖**实时重算；支持导出 CSV / Excel / PNG / 批量 |
+| `core/algorithms/_helpers.py` | 算法公共小工具：`enforce_min_distance` 最小间距压制、`refine_apex` 顶点细化、`dedup_identical_peaks` **同 apex 去重护栏**（防止一个峰被数成两条，见避坑 #26） |
 | `desktop/theme.py` | **统一视觉层**：深色 QSS 主题、算法编号/中文名/配色映射（`ALG_VISUALS`）、色板常量；并提供 `install_fonts()` 字体兜底（见避坑 #21）。改配色时与 `web/frontend/src/theme.ts` **一起改** |
 | `desktop/param_panel.py` | `ParamPanel`：读取算法 `ParamSpec`（同时兼容对象与 dict 两种元数据），**自动生成参数表单**（输入框/勾选），改动时发出 `paramsChanged` 信号 |
 | `desktop/batch_dialog.py` | `BatchDialog`：选择文件夹 + 算法，批量跑并把每个文件的峰导出到输出目录 |
@@ -406,8 +407,8 @@ python -m http.server 8000
 | `src/components/ComparePanel.tsx` | **对比面板**：各算法 峰数 / 耗时 / 平均峰高 / 不对称 / 置信度 横向对照表 |
 | `src/components/LogPanel.tsx` | **日志面板**：运行记录（载入 / 运行 / 导出 / 错误），带时间戳与颜色分级 |
 | `src/components/AboutPanel.tsx` | **关于面板**：版本、架构说明、算法清单与快捷操作提示 |
-| `src/components/PeakTable.tsx` | **峰表**：来源筛选 + 关键字过滤 + 全部峰的指标表格（rt/最小点/峰高/面积/峰宽/分离度/不对称/置信度/来源/标记） |
-| `src/components/BottomPanel.tsx` | **底部区域**：峰表 / 结果（共识峰）/ 文件信息 三个标签页 + 底部状态栏（文件 · 点数 · 采样间隔 · 算法 · 峰数 · 耗时 · 光标） |
+| `src/components/PeakTable.tsx` | **峰表**：来源筛选 + 关键字过滤 + **仅共识峰**开关 + 全部峰的指标表格（序号/rt/最小点/峰高/面积/峰宽/分离度/不对称/置信度/**共识**/来源算法/**算法实例**）。序号在筛选后重编，始终 1..N 连续；共识列为 `x/N`（该保留时间上被几个算法共同检出），孤峰整行压暗 |
+| `src/components/BottomPanel.tsx` | **底部区域**：峰表 / 结果（共识峰）/ 文件信息 三个标签页 + 底部状态栏（文件 · 点数 · 采样间隔 · 算法 · 峰数 · 耗时 · 光标）。峰表的共识度直接复用「结果」页的 `buildClusters`，两处口径一致 |
 | `src/components/Auth.tsx` | 登录/注册表单。**离线模式（`disabled`）下输入框与按钮全部禁用**，并提示"离线演示模式下无需登录"，从源头避免向不存在的后端发 POST 而报 405 |
 | `src/utils/localProjects.ts` | **本地项目仓库**：离线模式下的「保存项目」。把 `name / algorithms / params / x / y / results` 存进 `localStorage`，支持列出、读取、删除、改名；写入超限时自动丢弃最旧项目，避免 `QuotaExceededError` |
 | `src/utils/localBatch.ts` | **离线 ZIP 批量**：用 `jszip` 在浏览器里解压上传的 ZIP → 逐个 CSV 走本地引擎出峰 → 汇总 `summary.csv` + 每个文件一个 `peaks/xxx_peaks.csv` → 再打包成新 ZIP 下载。每处理完一个文件 `setTimeout(0)` 让出主线程，避免大数据量时页面假死 |
@@ -840,6 +841,32 @@ gh api -X POST /repos/<owner>/<repo>/pages -F "source[branch]=gh-pages" -F "sour
   ```
 - **验证**：构建后跑 `analyze --algorithms ALG-GNN`，应正常出峰（走回退分支）——本项目实测 24 peaks（6 算法）。
 - **注意**：这类「按需打包」必须**同时确认回退路径真的可用**，否则就是拿功能换体积。本项目 `ALG-GNN` 有明确的回退实现，才敢这么干。
+
+### 26. 一个峰被数成两条：顶点细化后落到同一采样点
+- **现象**：峰表里出现两条保留时间、峰高、峰面积**逐位相同**的行，只有「算法实例 #」不同（如 `导数法 #3` / `导数法 #4`）。
+- **原因**：`refine_apex()` 在 ±window 内找局部极大值。相邻两个候选点（来自阈值穿越 / 形态学残余 / 小波脊线）可能收敛到**同一个** apex 下标，同一个峰于是被输出两次。
+- **解决**：在 pipeline 出口加一道**确定性**去重，只删除 `index` 完全相同的重复，同组保留峰高较大者：
+  ```python
+  def dedup_identical_peaks(peaks):
+      best = {}
+      for pk in peaks:
+          cur = best.get(int(pk.index))
+          if cur is None or float(pk.height) > float(cur.height):
+              best[int(pk.index)] = pk
+      return sorted(best.values(), key=lambda p: float(p.rt))
+  ```
+  `analyze()`（单算法）与 `run_algorithms()`（多算法）两条路径都接上。
+- **关键取舍**：判据必须是「同一个 apex」，**不能**按保留时间聚类。真实色谱里未完全分离的肩峰保留时间可以只差 1e-3，按 rt 去重会**误删真峰**；apex 下标相同才是 100% 确定的重复。
+- **验证**：`pytest` 里有 5 条护栏测试，其中一条专门要求「相邻但 apex 不同的两条必须都保留」。
+
+### 27. 峰表序号跳号 / 列名与内容不符 / 单跑一个算法后新旧结果混在一起
+这三件事表面无关，根因都是**表格状态和真实结果脱节**，一起修：
+
+- **序号跳号**：原实现先 `enumerate` 编号、再做来源与关键字过滤，筛完序号就成了 3、7、11…… 改成**先过滤、后重编**，序号恒为 `1..N` 连续。
+- **列名名实不符**：末列表头写「标记」，内容却一直是"算法名 #实例号"，而真正的标记功能是空的。改名「算法实例」，「来源算法」列保留紧凑代号（`ALG-E`）靠颜色区分。
+- **新旧结果混在一起**：`run_single()` 只重算一个算法，其余算法的结果是在**上一轮预处理参数**下算出来的，界面上却看不出来。现在单跑后其余算法标「⟳ 待更新」并变琥珀色，F5 / 「运行全部」重算后自动清除。这也解释了"多个算法全勾选、却只有 1 个成功、其余显示待执行"这类现象——它们压根没跑过。
+- **过检怎么一眼看出来**：峰表新增「共识」列 `x/N`，即该保留时间上被几个算法共同检出。合成数据（真值 4 峰、6 算法全部命中）每一行都是 `6/6`；一旦出现 `1/N` 的孤峰，就是过检的头号嫌疑。配合「仅共识峰」开关可一键剔掉孤峰。
+  - 共识度与「结果」页的簇统计**共用同一套容差与相邻聚合规则**（桌面端 `_consensus_map` / Web 端 `buildClusters`），避免两处"共识峰数"对不上。
 
 
 
