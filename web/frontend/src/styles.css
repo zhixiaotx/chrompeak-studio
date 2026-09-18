@@ -413,6 +413,9 @@ table.data thead th {
 }
 table.data tbody tr:hover { background: var(--panel-2); }
 table.data tbody tr.sel { background: var(--accent-soft); }
+/* 单算法孤峰（共识度 = 1）：整行压暗，过检时一眼能挑出来 */
+table.data tbody tr.solo { color: var(--dim); }
+table.data tbody tr.solo td.idx { color: var(--dim); }
 table.data td.num { font-family: var(--mono); text-align: right; }
 table.data td.idx { font-family: var(--mono); color: var(--text); }
 table.data .algo-cell { display: flex; align-items: center; gap: 6px; }

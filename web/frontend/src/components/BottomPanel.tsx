@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Peak } from "../api";
 import { algVisual } from "../theme";
 import type { LocalProject } from "../utils/localProjects";
@@ -46,6 +46,11 @@ interface Cluster {
   avgH: number;
   avgScore: number;
   spread: number;
+  keys: string[];
+}
+
+export function peakKey(p: Peak): string {
+  return `${p.algorithm}|${p.index}`;
 }
 
 function buildClusters(peaks: Peak[], xmin: number, xmax: number): Cluster[] {
@@ -67,6 +72,7 @@ function buildClusters(peaks: Peak[], xmin: number, xmax: number): Cluster[] {
       avgH: g.reduce((a, p) => a + p.height, 0) / g.length,
       avgScore: g.reduce((a, p) => a + p.score, 0) / g.length,
       spread: Math.max(...rts) - Math.min(...rts),
+      keys: g.map(peakKey),
     };
   });
 }
@@ -81,6 +87,21 @@ export default function BottomPanel({
     [allPeaks, info.xmin, info.xmax]
   );
   const consensus = clusters.filter((c) => c.nAlg >= 2).length;
+  // (alg|index) → 该保留时间簇上共同检出的算法数；峰表用它标「共识度」
+  const consMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const c of clusters) for (const k of c.keys) m[k] = c.nAlg;
+    return m;
+  }, [clusters]);
+  const nAlg = useMemo(
+    () => new Set(allPeaks.map((p) => p.algorithm)).size,
+    [allPeaks]
+  );
+  const [onlyCons, setOnlyCons] = useState(false);
+  const shown = useMemo(
+    () => (onlyCons ? peaks.filter((p) => (consMap[peakKey(p)] ?? 1) >= 2) : peaks),
+    [peaks, onlyCons, consMap]
+  );
 
   return (
     <section className="bottom">
@@ -116,12 +137,32 @@ export default function BottomPanel({
               value={query}
               onChange={(e) => onQuery(e.target.value)}
             />
+            <label
+              style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}
+              title="只显示被 ≥2 个算法共同检出的峰 —— 用来快速判断是否过检"
+            >
+              <input
+                type="checkbox"
+                checked={onlyCons}
+                onChange={(e) => setOnlyCons(e.target.checked)}
+                style={{ width: "auto", margin: 0 }}
+              />
+              仅共识峰
+            </label>
             <span style={{ marginLeft: "auto" }}>
-              共 <b style={{ color: "var(--text)" }}>{peaks.length}</b> / {allPeaks.length} 个峰
+              共 <b style={{ color: "var(--text)" }}>{shown.length}</b> / {allPeaks.length} 个峰
+              　·　共识 {consensus}
             </span>
           </div>
           <div className="table-scroll">
-            <PeakTable peaks={peaks} x={x} selected={selected} onSelect={onSelect} />
+            <PeakTable
+              peaks={shown}
+              x={x}
+              cons={consMap}
+              nAlg={nAlg}
+              selected={selected}
+              onSelect={onSelect}
+            />
           </div>
         </>
       )}

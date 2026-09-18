@@ -5,6 +5,9 @@ import { algShortLabel, algVisual } from "../theme";
 interface Props {
   peaks: Peak[];
   x: number[];
+  /** (algorithm|index) → 该保留时间簇上共同检出的算法数 */
+  cons: Record<string, number>;
+  nAlg: number;
   selected?: number;
   onSelect?: (i: number) => void;
 }
@@ -12,13 +15,14 @@ interface Props {
 interface Row {
   no: number;
   algNo: number;
+  cons: number;
   peak: Peak;
   xLeft: number;
   width: number;
   res: number | null;
 }
 
-export default function PeakTable({ peaks, x, selected, onSelect }: Props) {
+export default function PeakTable({ peaks, x, cons, nAlg, selected, onSelect }: Props) {
   const rows = useMemo<Row[]>(() => {
     const groups: Record<string, Peak[]> = {};
     for (const p of peaks) (groups[p.algorithm] ||= []).push(p);
@@ -39,12 +43,14 @@ export default function PeakTable({ peaks, x, selected, onSelect }: Props) {
       });
     }
     prepared.sort((a, b) => a.p.rt - b.p.rt || a.alg.localeCompare(b.alg));
+    // 序号在筛选之后重新编号，保证始终是 1..N 连续、不会跳号
     prepared.forEach((r, i) => {
       const li = r.p.left >= 0 && r.p.left < x.length ? r.p.left : r.p.index;
       const ri = r.p.right >= 0 && r.p.right < x.length ? r.p.right : r.p.index;
       out.push({
         no: i + 1,
         algNo: r.algNo,
+        cons: cons[`${r.p.algorithm}|${r.p.index}`] ?? 1,
         peak: r.p,
         xLeft: x[li] ?? r.p.rt,
         width: x[ri] !== undefined && x[li] !== undefined ? x[ri] - x[li] : 0,
@@ -52,7 +58,7 @@ export default function PeakTable({ peaks, x, selected, onSelect }: Props) {
       });
     });
     return out;
-  }, [peaks, x]);
+  }, [peaks, x, cons]);
 
   if (rows.length === 0) {
     return (
@@ -75,17 +81,19 @@ export default function PeakTable({ peaks, x, selected, onSelect }: Props) {
           <th>分离度 w/s</th>
           <th>不对称因子</th>
           <th>置信度</th>
+          <th title="该保留时间上被多少个算法共同检出（≥2 视为共识峰，=1 属单算法孤峰，过检时优先怀疑）">共识</th>
           <th>来源算法</th>
-          <th>标记</th>
+          <th>算法实例</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((r) => {
           const v = algVisual(r.peak.algorithm);
+          const solo = r.cons < 2;
           return (
             <tr
               key={`${r.no}-${r.peak.algorithm}-${r.peak.index}`}
-              className={selected === r.no - 1 ? "sel" : ""}
+              className={`${selected === r.no - 1 ? "sel" : ""}${solo ? " solo" : ""}`}
               onClick={() => onSelect?.(r.no - 1)}
             >
               <td className="idx">{r.no}</td>
@@ -110,6 +118,12 @@ export default function PeakTable({ peaks, x, selected, onSelect }: Props) {
                     {r.peak.score.toFixed(2)}
                   </span>
                 </span>
+              </td>
+              <td
+                className="num"
+                style={{ color: solo ? "var(--dim)" : "var(--ok)" }}
+              >
+                {r.cons}/{nAlg}
               </td>
               <td>
                 <span className="algo-cell">
