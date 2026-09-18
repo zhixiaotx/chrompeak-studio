@@ -12,6 +12,7 @@
 
 - [这个项目能做什么](#这个项目能做什么)
 - [整体架构](#整体架构)
+- [界面布局（桌面端与 Web 端一致）](#界面布局桌面端与-web-端一致)
 - [目录结构一览](#目录结构一览)
 - [快速开始](#快速开始)
   - [方式一：Web 端（最简单，免安装）](#方式一web-端最简单免安装)
@@ -88,6 +89,41 @@ graph TD
 
 ---
 
+## 界面布局（桌面端与 Web 端一致）
+
+两端采用**同一套"色谱工作站"布局**，学会一个就会另一个。视觉层也做了对齐：桌面端 `desktop/theme.py` 与 Web 端 `web/frontend/src/theme.ts` 里的算法编号（`ALG-D/E/W/M/C/GNN`）、中文名称、曲线配色**必须同步修改**，否则两端看起来会不一致。
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ 顶栏：品牌标识 │ 文件 视图 算法 工具 帮助 │ 对比 批量 测量 导出 │
+├────┬────────────────────────────────────┬────────────────────┤
+│图标│                                    │ 右侧面板（可切换）  │
+│栏  │        中央色谱图                   │ · 算法  列表+参数   │
+│    │  （十字光标读数 / 可点选图例）       │ · 预处理 基线+平滑  │
+│算法│                                    │ · 对比  指标横向表  │
+│预处│                                    │ · 日志  运行记录    │
+│对比│                                    │ · 关于  版本说明    │
+│日志├────────────────────────────────────┤                    │
+│关于│ 底部标签页：峰表 │ 结果 │ 文件信息   │                    │
+├────┴────────────────────────────────────┴────────────────────┤
+│ 状态栏：文件 · 点数 · 采样间隔 · 算法 · 峰数 · 耗时 · 光标读数   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+| 区域 | 桌面端（PyQt6） | Web 端（React） |
+| --- | --- | --- |
+| 顶栏菜单 | `QMenuBar` + 品牌 `cornerWidget` | `components/TopBar.tsx` |
+| 左图标栏 | `_build_rail()` 的 `QToolButton` | `components/IconRail.tsx` |
+| 中央色谱图 | `pyqtgraph.PlotWidget` + `InfiniteLine` 十字光标 | `components/Chromatogram.tsx`（uPlot） |
+| 右侧面板 | `QStackedWidget`（算法/预处理/对比/日志/关于） | `AlgorithmPanel` / `PreprocessPanel` / `ComparePanel` / `LogPanel` / `AboutPanel` |
+| 底部标签页 | `QTabWidget`（峰表/结果/文件信息） | `components/BottomPanel.tsx` + `PeakTable.tsx` |
+| 状态栏 | `QStatusBar` + 多个 `QLabel` | `BottomPanel.tsx` 内的 `.statusbar` |
+| 算法列表行 | `AlgRow`（勾选 + 色条 + 执行 + 峰数/耗时） | `AlgorithmPanel.tsx` 的行渲染 |
+
+> **交互约定（两端一致）**：拖动图表框选放大、右键复位；鼠标移动显示 `t = 时间 / 响应` 读数；点击左上角图例显隐曲线；算法列表点「执行」只跑该算法并单独计时；参数改动 **200ms（桌面）/ 250ms（Web）防抖**后自动重算。
+
+---
+
 ## 目录结构一览
 
 ```
@@ -101,7 +137,8 @@ chrompeak-studio/
 │   ├── sample_data.py        # 生成演示数据（无需外部文件）
 │   └── __main__.py           # 支持 `python -m core` 直接体验算法
 ├── desktop/                  # 桌面端
-│   ├── main_window.py        # PyQt6 图形界面主窗口
+│   ├── main_window.py        # PyQt6 图形界面主窗口（工作站布局）
+│   ├── theme.py              # 统一视觉层：深色 QSS + 算法编号/配色 + 字体兜底
 │   ├── param_panel.py        # 根据算法参数自动生成表单
 │   ├── batch_dialog.py       # 批量处理对话框
 │   ├── cli.py                # 命令行版本（无界面）
@@ -117,9 +154,10 @@ chrompeak-studio/
 │   └── frontend/             # React + Vite 前端
 │       ├── src/
 │       │   ├── App.tsx       # 主页面与交互逻辑
+│       │   ├── theme.ts      # 统一视觉层（与 desktop/theme.py 对齐）
 │       │   ├── api.ts        # 后端通信封装
 │       │   ├── analysis.ts   # 前端离线算法引擎（无后端时在浏览器出峰）
-│       │   ├── components/   # 图表、参数面板、结果表、登录
+│       │   ├── components/   # 顶栏/图标栏/色谱图/右侧面板/峰表/状态栏
 │       │   ├── utils/        # lttb 降采样 / ZIP 批量 / 本地项目仓库
 │       │   └── styles.css    # 样式与移动端适配
 │       ├── index.html
@@ -258,8 +296,9 @@ python desktop/build_desktop.py
 
 | 文件 | 作用 |
 | --- | --- |
-| `desktop/main_window.py` | **PyQt6 主窗口**：左侧算法列表 + 参数面板，中间色谱图（pyqtgraph）+ 结果表 + 工具栏。参数改动后 **200ms 防抖**实时重算预览；支持导出 CSV / Excel / PNG / 批量 |
-| `desktop/param_panel.py` | `ParamPanel`：读取算法 `ParamSpec`，**自动生成参数表单**（滑块/输入框/勾选），改动时发出 `paramsChanged` 信号 |
+| `desktop/main_window.py` | **PyQt6 主窗口（工作站布局）**：顶栏菜单 + 品牌区、左图标栏、中央 pyqtgraph 色谱图（十字光标 + 可点选图例）、右侧 `QStackedWidget` 面板（算法/预处理/对比/日志/关于）、底部标签页（峰表/结果/文件信息）、状态栏。参数改动后 **200ms 防抖**实时重算；支持导出 CSV / Excel / PNG / 批量 |
+| `desktop/theme.py` | **统一视觉层**：深色 QSS 主题、算法编号/中文名/配色映射（`ALG_VISUALS`）、色板常量；并提供 `install_fonts()` 字体兜底（见避坑 #21）。改配色时与 `web/frontend/src/theme.ts` **一起改** |
+| `desktop/param_panel.py` | `ParamPanel`：读取算法 `ParamSpec`（同时兼容对象与 dict 两种元数据），**自动生成参数表单**（输入框/勾选），改动时发出 `paramsChanged` 信号 |
 | `desktop/batch_dialog.py` | `BatchDialog`：选择文件夹 + 算法，批量跑并把每个文件的峰导出到输出目录 |
 | `desktop/cli.py` | **命令行版**：`analyze` / `batch` / `project` / `rerun` 四个子命令，适合服务器、CI、批处理。与 GUI 共用同一份 `core` |
 | `desktop/build_desktop.py` | **打包脚本**：调用 PyInstaller 生成两个 `.exe`（GUI 用 `--windowed`，CLI 用 `--console`），并把 `core` 与 `models` 作为数据打包进去 |
@@ -285,17 +324,26 @@ python desktop/build_desktop.py
 | `vite.config.ts` | Vite 配置：`base: "./"`（构建产物全部用相对路径）、`/api` 代理到 `localhost:8000`（本地开发免跨域）、`chunkSizeWarningLimit` 放宽 |
 | `package.json` | 依赖与脚本：`dev` / `build` / `preview`。运行时依赖仅 4 个：`react`、`react-dom`、`uplot`、`jszip`（`jszip` 用于**离线 ZIP 批量**在浏览器里读写压缩包） |
 | `src/main.tsx` | React 渲染入口 |
-| `src/App.tsx` | **主页面与全部交互**：后端可达性探测（`backendOk` 三态：检测中 / 在线 / 离线）、文件上传、参数调优后 **250ms 防抖**重算（在线走 WebSocket 流式，离线走本地引擎）、项目保存/加载、JSON 导入导出、ZIP 批量、本地项目列表。**主界面无需登录即可使用**；登录只是侧边栏里一张可折叠卡片 |
-| `src/analysis.ts` | **离线算法引擎（TypeScript 版）**：无后端时在浏览器里跑完 6 种算法并出峰。内含基线估计、均值/高斯平滑、差分高斯（近似墨西哥帽小波）、形态学顶帽、FWHM/面积/不对称因子计算；对外导出 `analyzeLocal`、`preprocessForDisplay`、`parseCsvText`/`parseCsvFile`、`syntheticChromatogram`（示例数据）、`LOCAL_ALGORITHMS`（与后端一致的算法元信息）。**纯前端、零请求、可在任何静态托管上运行** |
+| `src/theme.ts` | **统一视觉层**：`ALG_VISUALS`（算法编号/中文名/曲线颜色/一句话说明）、`algVisual()`、`AlgRunStat` 类型、`DEFAULT_PREPROCESS` 预处理默认值。**与 `desktop/theme.py` 一一对应，改色两端一起改** |
+| `src/App.tsx` | **主页面与全部交互**：后端可达性探测（`backendOk` 三态：检测中 / 在线 / 离线）、文件上传、参数调优后 **250ms 防抖**重算（在线走 WebSocket 流式，离线走本地引擎）、项目保存/加载、JSON 导入导出、ZIP 批量、本地项目列表。**主界面无需登录即可使用**；登录只是顶栏里一张可折叠卡片 |
+| `src/analysis.ts` | **离线算法引擎（TypeScript 版）**：无后端时在浏览器里跑完 6 种算法并出峰。内含基线估计、均值/高斯平滑、差分高斯（近似墨西哥帽小波）、形态学顶帽、FWHM/面积/不对称因子计算；对外导出 `analyzeLocal`、`analyzeLocalOne`（单算法计时）、`preprocessForDisplay`（支持预处理参数）、`parseCsvText`/`parseCsvFile`、`syntheticChromatogram`（示例数据）、`LOCAL_ALGORITHMS`。**纯前端、零请求、可在任何静态托管上运行** |
 | `src/api.ts` | **后端通信封装**：`API_BASE`（优先读 `VITE_API_BASE`，否则 `/api`）、`api` 对象（register/login/algorithms/analyze/analyzeBatch/projects）、`wsUrl()` 生成 WebSocket 地址。新增 `BackendUnavailableError` + `readableError()`：把静态托管返回的 404/405 HTML 兜底页翻译成可读中文错误，App 据此判定"后端不存在"。集中所有请求，改地址只动这一处 |
+| `src/components/TopBar.tsx` | **顶栏**：品牌标识 + 文件/视图/算法/工具/帮助菜单 + 右侧动作按钮（对比 / 批量 / 测量 / 导出）+ 用户区 |
+| `src/components/IconRail.tsx` | **左图标栏**：算法 / 预处理 / 对比 / 日志 / 关于 五个面板的切换入口（选中态左侧高亮条） |
+| `src/components/Chromatogram.tsx` | **色谱图组件**（uPlot）：原始曲线 + 处理后曲线 + 每个算法一组彩色散点；用 LTTB 降采样保证大文件流畅，`ResizeObserver` 跟随容器宽度自适应；十字光标 + 右上角 `t / 响应` 读数；左上角可点选图例显隐曲线。序列数量变化时重建图表，否则只 `setData` 增量更新 |
+| `src/components/AlgorithmPanel.tsx` | **算法面板**：搜索框 + 全选/全不选 + 算法行列表（勾选框、色条、编号、`执行` 按钮、峰数/耗时状态）；点行展开该算法的参数表单 |
+| `src/components/PreprocessPanel.tsx` | **预处理面板**：基线校正（阶数/迭代/容差）与 Savitzky-Golay 平滑（窗口/阶数）参数，改动即重算 |
+| `src/components/ComparePanel.tsx` | **对比面板**：各算法 峰数 / 耗时 / 平均峰高 / 不对称 / 置信度 横向对照表 |
+| `src/components/LogPanel.tsx` | **日志面板**：运行记录（载入 / 运行 / 导出 / 错误），带时间戳与颜色分级 |
+| `src/components/AboutPanel.tsx` | **关于面板**：版本、架构说明、算法清单与快捷操作提示 |
+| `src/components/PeakTable.tsx` | **峰表**：来源筛选 + 关键字过滤 + 全部峰的指标表格（rt/最小点/峰高/面积/峰宽/分离度/不对称/置信度/来源/标记） |
+| `src/components/BottomPanel.tsx` | **底部区域**：峰表 / 结果（共识峰）/ 文件信息 三个标签页 + 底部状态栏（文件 · 点数 · 采样间隔 · 算法 · 峰数 · 耗时 · 光标） |
+| `src/components/ResultTable.tsx` | ⚠️ **旧版结果表，已被 `PeakTable.tsx` + `BottomPanel.tsx` 取代，当前无引用**（保留仅为兼容历史，可安全删除） |
+| `src/components/Auth.tsx` | 登录/注册表单。**离线模式（`disabled`）下输入框与按钮全部禁用**，并提示"离线演示模式下无需登录"，从源头避免向不存在的后端发 POST 而报 405 |
 | `src/utils/localProjects.ts` | **本地项目仓库**：离线模式下的「保存项目」。把 `name / algorithms / params / x / y / results` 存进 `localStorage`，支持列出、读取、删除、改名；写入超限时自动丢弃最旧项目，避免 `QuotaExceededError` |
 | `src/utils/localBatch.ts` | **离线 ZIP 批量**：用 `jszip` 在浏览器里解压上传的 ZIP → 逐个 CSV 走本地引擎出峰 → 汇总 `summary.csv` + 每个文件一个 `peaks/xxx_peaks.csv` → 再打包成新 ZIP 下载。每处理完一个文件 `setTimeout(0)` 让出主线程，避免大数据量时页面假死 |
 | `src/utils/lttb.ts` | **LTTB 降采样算法**：把上万点的曲线压缩到屏幕宽度的 2 倍点数，保留视觉形状 |
-| `src/components/Chromatogram.tsx` | **色谱图组件**（uPlot）：每个算法一个彩色散点序列（`ALG_COLORS`），用 LTTB 降采样保证大文件流畅，`ResizeObserver` 跟随容器宽度自适应；序列数量变化时重建图表，否则只 `setData` 增量更新 |
-| `src/components/AlgorithmPanel.tsx` | 算法开关 + 参数表单（复用 `ParamSpec` 自动生成滑块，免登录即用） |
-| `src/components/ResultTable.tsx` | 结果表：列出所有算法的峰（rt / height / area / fwhm 等） |
-| `src/components/Auth.tsx` | 登录/注册表单。**离线模式（`disabled`）下输入框与按钮全部禁用**，并提示"离线演示模式下无需登录"，从源头避免向不存在的后端发 POST 而报 405 |
-| `src/styles.css` | 全部样式（深色主题 CSS 变量）+ **移动端适配**（`@media` 断点，见下文），另含 `.offline-banner`（离线提示条）、`.auth-card`、`.proj-list`（本地项目列表） |
+| `src/styles.css` | 全部样式（深色主题 CSS 变量 + flex 布局：顶栏/图标栏/中央/右侧面板/底部/状态栏）+ **移动端适配**（`@media` 断点 860px / 480px，见下文），另含 `.offline-banner`、`.auth-card`、`.proj-list` |
 | `src/vite-env.d.ts` | 声明 `vite/client` 类型，使 `import.meta.env` 可用 |
 | `public/404.html` | SPA 兜底页（刷新深层链接时不 404） |
 | `vercel.json` / `netlify.toml` / `wrangler.toml` | 三大平台的部署配置（重写到 `index.html`，启用 SPA） |
@@ -345,6 +393,31 @@ python desktop/build_desktop.py
 4. **大数据不卡**：`utils/lttb.ts` 用最大三角桶降采样，即使几万点也只在屏幕上绘制约 `2 × 宽度` 个点。
 
 5. **SPA 兜底**：`public/404.html` + 各平台 `rewrites` 配置，保证在 GitHub Pages / Cloudflare / Vercel / Netlify 上刷新任意路径都不会 404。
+
+### 移动端特殊适配（本项目实际踩到的问题）
+
+上面的通用适配还不够——以下 4 条是本项目在移动端真机调试后才加的：
+
+6. **触摸双指缩放时 Chrome 会临时接管合成层，导致图表断帧堆叠 → 视觉上"整页在闪"**
+   - **现象**：手机上双指缩放、或快速滑动后，图表区域出现明显的层叠撕裂/闪烁。
+   - **原因**：缩放过程中浏览器改变了图层合成方式，滚动容器被提升/回落。
+   - **解决**：给滚动容器显式加 `will-change: transform` 并配合 `overflow-anchor: none`，避免合成层反复提升。
+
+7. **高度必须为 auto / 至少 `600px`，不能用 `100%`**
+   - **现象**：移动端图表被压扁、甚至高度塌陷为 0。
+   - **原因**：父级是 flex 布局时，`height: 100%` 在移动端 Safari/Chrome 下解析不稳定。
+   - **解决**：图表容器高度写 `auto`，并给 `min-height: 600px` 兜底。
+
+8. **`Input[type=file]` 的 `size=5` / `size=10` 在移动端行为不可控**
+   - **现象**：上传按钮在手机上宽度飘忽，有时被裁切。
+   - **解决**：去掉 `size` 属性，改用 **CSS 类**统一控制宽度（视觉文案与实际宽度一致）。
+
+9. **负路径段检查：`path.split("/")` 后必须过滤**
+   - **现象**：某些 ZIP / 服务端返回的路径里会出现空段或 `-100` 之类的负号残留（例如 `.../-100/foo.csv`），导致文件名解析异常。
+   - **解决**：对每一段做过滤后再 `join`，例如：
+     ```ts
+     const p = path.split("/").filter(s => !/^-\d+$/.test(s)).join("/");
+     ```
 
 ---
 
@@ -547,6 +620,39 @@ gh api -X POST /repos/<owner>/<repo>/pages -F "source[branch]=gh-pages" -F "sour
 3. 等 1~2 分钟再刷新。
 
 > 另外：GitHub Pages 默认启用 Jekyll，会忽略 `_` 开头的文件/目录，所以工作流里要生成一个空 `.nojekyll`。
+
+### 21. PyQt6 在精简环境里**找不到字体库**，整个界面全是方块
+
+- **现象**：程序能跑，布局也对，但所有文字都渲染成 `□□□`。日志里先出现一行：
+  ```
+  QFontDatabase: Cannot find font directory .../PyQt6/Qt6/lib/fonts.
+  Note that Qt no longer ships fonts. Deploy some or switch to fontconfig.
+  ```
+- **原因**：**Qt 6 起不再自带字体**。在离屏渲染（`QT_QPA_PLATFORM=offscreen`）、精简容器、或 PyInstaller 打包后缺 fontconfig 的环境里，Qt 字体数据库是**空的**（`QFontDatabase.families()` 返回 `0` 个），于是所有字形都画不出来。
+- **排查**：打印一下字体数量就能确认——
+  ```python
+  from PyQt6.QtGui import QFontDatabase
+  print(len(QFontDatabase.families()))   # 0 → 中招
+  ```
+- **解决**（本项目 `desktop/theme.py` 的 `install_fonts()`）：**显式把字体文件注册进应用**，再把第一个可用的中文字体设为全局字体。注意在创建任何窗口之前调用：
+  ```python
+  from PyQt6.QtGui import QFont, QFontDatabase
+
+  for path in (r"C:\Windows\Fonts\msyh.ttc",      # 微软雅黑
+               r"C:\Windows\Fonts\msyhbd.ttc",
+               r"C:\Windows\Fonts\simhei.ttf",      # 黑体
+               r"C:\Windows\Fonts\segoeui.ttf"):
+      if os.path.exists(path):
+          QFontDatabase.addApplicationFont(path)
+
+  families = set(QFontDatabase.families())          # 注册后：0 → N
+  for name in ("Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimHei"):
+      if name in families:
+          app.setFont(QFont(name, 9))
+          break
+  ```
+- **验证**：本项目用离屏脚本的实际输出对比——注册前 `families = 0`，注册后 `families = 5` 且 `Microsoft YaHei UI` 命中，截图里中文恢复正常。
+- **额外提醒**：`install_fonts()` 必须在 `QApplication(...)` **之后**、`MainWindow()` **之前**调用；字体文件是**绝对路径**，跨平台时要把 Linux/macOS 的字体路径一并列进候选（本项目 `_FONT_FILES` 里带了 DejaVu 兜底）。
 
 
 ---
