@@ -687,6 +687,28 @@ gh api -X POST /repos/<owner>/<repo>/pages -F "source[branch]=gh-pages" -F "sour
 - **验证**：`python -c "import runpy; runpy.run_path('desktop/main_window.py', run_name='not_main')"`（模拟脚本方式）与 `python -c "import desktop.main_window"`（模拟包方式）都要能通过，才算真正修好。
 - **一句话经验**：**能把包入口写成 `python -m pkg.module` 就写它**；如果非要让某个模块文件既能当脚本又能被 PyInstaller 当入口，就别用相对导入。
 
+### 23. 重复打包时报错：输出目录**删不掉**导致构建中断
+
+- **现象**：**第二次**打包时构建失败，日志最后一行类似：
+  ```
+  INFO: Building COLLECT because COLLECT-00.toc is non existent
+  INFO: Removing dir D:\...\dist\ChromaPeakStudio
+  [safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":1842,"targets":["...\\dist\\ChromaPeakStudio"]}
+  ```
+  但 `INFO: Building EXE ... completed successfully` 已经打印——说明 EXE 其实编译好了，只是没被复制进 `dist/`。
+- **原因**：PyInstaller 的 **COLLECT** 步骤在输出前会**先删掉已存在的 `dist/<name>/`**（一个 onedir 产物有上千个文件）。如果你所在的环境有「**批量删除保护**」（例如要求删除超过 N 个文件前必须确认、或容器/沙箱拦截大批量 `unlink`），这一步就会被打断，整个构建以退出码 1 结束。
+  注意：`--noconfirm` 只关掉 PyInstaller 自己的交互提问，**挡不住环境层的删除保护**。
+- **解决**：先**把旧输出目录改名挪走**（改名不是删除，不触发保护），再正常构建：
+  ```bash
+  mv dist/ChromaPeakStudio  dist/ChromaPeakStudio_old
+  mv dist/ChromaPeakCLI     dist/ChromaPeakCLI_old
+  mv build/ChromaPeakStudio build/ChromaPeakStudio_old   # 因为传了 --clean，工作目录也会被删
+  mv build/ChromaPeakCLI    build/ChromaPeakCLI_old
+  ```
+  旧目录留在旁边当备份，确认新产物无误后再自行清理。
+- **也可以**：改用 `--distpath` 指向一个全新目录（例如 `dist_build_20260918/`），从根上避开「目标已存在」的删除动作。
+- **排查提示**：看到 `Removing dir ...` 后紧跟一条带 `count` 的删除保护日志，就是这个坑；**不要把「EXE built successfully」当成构建成功**，一定要看整体退出码和 `dist/` 里的时间戳。
+
 
 ---
 
