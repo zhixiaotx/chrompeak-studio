@@ -4,6 +4,7 @@
 // 在浏览器里直接做峰识别，做到「页面打开即用、不报 404/405」。
 
 import type { AlgMeta, ParamSpec, Peak } from "./api";
+import { DEFAULT_PREPROCESS, type PreprocessConf } from "./theme";
 
 // ---------------- 数值工具 ----------------
 function maxOf(a: number[]): number {
@@ -222,27 +223,48 @@ function strategyFor(name: string, p: Record<string, any>): DetectOpts {
 }
 
 // ---------------- 对外 API ----------------
+
+/** 只跑单个算法（便于在 UI 上单独计时）。 */
+export function analyzeLocalOne(
+  x: number[],
+  yRaw: number[],
+  name: string,
+  params: Record<string, any>
+): Peak[] {
+  return findPeaks(x, yRaw, strategyFor(name, params || {})).map((pk) => ({
+    ...pk,
+    algorithm: name,
+  }));
+}
+
 export function analyzeLocal(
   x: number[],
   yRaw: number[],
   algorithms: string[],
-  params: Record<string, Record<string, any>>
+  params: Record<string, Record<string, any>>,
+  preprocess?: Partial<PreprocessConf>
 ): { x: number[]; y: number[]; y_proc: number[]; results: Record<string, Peak[]> } {
   const results: Record<string, Peak[]> = {};
   for (const name of algorithms) {
-    const peaks = findPeaks(x, yRaw, strategyFor(name, params[name] || {})).map((pk) => ({
-      ...pk,
-      algorithm: name,
-    }));
-    results[name] = peaks;
+    results[name] = analyzeLocalOne(x, yRaw, name, params[name] || {});
   }
-  return { x, y: yRaw, y_proc: preprocessForDisplay(x, yRaw), results };
+  return { x, y: yRaw, y_proc: preprocessForDisplay(x, yRaw, preprocess), results };
 }
 
-export function preprocessForDisplay(x: number[], y: number[]): number[] {
-  const base = baseline(y, 64);
-  let ys = y.map((v, i) => v - base[i]);
-  ys = movingAverage(ys, 5);
+/** 浏览器端的显示用预处理（基线校正 + 平滑），参数与 core/preprocess.py 同名。 */
+export function preprocessForDisplay(
+  x: number[],
+  y: number[],
+  conf?: Partial<PreprocessConf>
+): number[] {
+  const c = { ...DEFAULT_PREPROCESS, ...(conf || {}) };
+  let ys = y.slice();
+  if (c.baseline) {
+    const win = Math.max(24, Math.round(c.baseline_order * 12));
+    const base = baseline(y, win);
+    ys = ys.map((v, i) => v - base[i]);
+  }
+  if (c.smooth) ys = movingAverage(ys, Math.max(1, Math.round(c.smooth_window)));
   return ys;
 }
 

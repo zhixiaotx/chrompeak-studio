@@ -188,19 +188,21 @@ async def ws_analyze(websocket: WebSocket):
             y = msg.get("y")
             algos = msg.get("algorithms") or [m["name"] for m in available_algorithms()]
             algo_params = msg.get("params") or {}
+            pre_opts = msg.get("preprocess") or None
             if not x or not y:
                 await websocket.send_json({"type": "error", "msg": "缺少 x/y"})
                 continue
             # 边算边发：每个算法算完即推送其峰
             for name in algos:
-                res = analyze(x, y, name, algo_params.get(name))
+                res = analyze(x, y, name, algo_params.get(name), pre_opts)
                 await websocket.send_json({
                     "type": "algorithm", "algorithm": name,
                     "peaks": res["peaks"],
                     "y_proc": res["y_proc"][::10],  # 降采样避免过大
                 })
             await websocket.send_json({"type": "done",
-                                      "y_proc": analyze(x, y, algos[0])["y_proc"][::10]})
+                                      "y_proc": analyze(x, y, algos[0], None,
+                                                       pre_opts)["y_proc"][::10]})
     except WebSocketDisconnect:
         return
     except Exception as e:  # noqa: BLE001

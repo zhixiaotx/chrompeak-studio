@@ -130,23 +130,27 @@ export const api = {
     file: File,
     algorithms: string[],
     params: Record<string, Record<string, any>>,
-    token?: string | null
+    token?: string | null,
+    preprocess?: any | null
   ): Promise<AnalyzeResult> {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("algorithms", JSON.stringify(algorithms));
     fd.append("params", JSON.stringify(params));
+    if (preprocess) fd.append("preprocess", JSON.stringify(preprocess));
     return jsonFetch<AnalyzeResult>("/analyze", { method: "POST", body: fd }, token);
   },
 
   async analyzeBatch(
     zip: File,
     algorithms: string[],
-    token?: string | null
+    token?: string | null,
+    preprocess?: any | null
   ): Promise<{ download_url: string; n_peaks: number }> {
     const fd = new FormData();
     fd.append("file", zip);
     fd.append("algorithms", JSON.stringify(algorithms));
+    if (preprocess) fd.append("preprocess", JSON.stringify(preprocess));
     return jsonFetch<{ download_url: string; n_peaks: number }>(
       "/analyze_batch",
       { method: "POST", body: fd },
