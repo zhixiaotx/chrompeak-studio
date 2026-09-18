@@ -23,12 +23,20 @@ COMMON = [
     "--onedir",
     "--noconfirm",
     "--clean",
+    # 显式把项目根加入模块搜索路径：入口脚本里的 `from desktop import ...`
+    # 与 `from core import ...` 都依赖它（否则冻结后运行会 ImportError）
+    "--paths", ROOT,
     "--add-data", CORE,
     "--add-data", MODELS,
     "--hidden-import", "scipy.special._ufuncs_cxx",
     "--hidden-import", "numpy",
     "--hidden-import", "scipy",
+    "--hidden-import", "desktop",
+    "--hidden-import", "desktop.theme",
+    "--hidden-import", "desktop.param_panel",
+    "--hidden-import", "desktop.batch_dialog",
     "--collect-all", "core",
+    "--collect-all", "desktop",
     "--collect-all", "pyqtgraph",
     "--collect-all", "onnxruntime",
 ]

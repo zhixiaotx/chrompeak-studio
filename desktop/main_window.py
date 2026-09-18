@@ -9,6 +9,14 @@ import os
 import sys
 import time
 
+# 让本文件既能 `python desktop/main_window.py` 直接运行、也能被 PyInstaller 当作入口脚本：
+# 以脚本方式执行时没有父包，相对导入（from . import ...）会报
+# "attempted relative import with no known parent package"，
+# 这里把项目根目录补进 sys.path，改用绝对包导入（from desktop import ...）。
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -27,9 +35,9 @@ from core.pipeline import analyze, run_algorithms
 from core.preprocess import PreprocessOptions
 from core.sample_data import synthetic_chromatogram
 
-from . import theme as T
-from .batch_dialog import BatchDialog
-from .param_panel import ParamPanel
+from desktop import theme as T
+from desktop.batch_dialog import BatchDialog
+from desktop.param_panel import ParamPanel
 
 RAIL_ITEMS = [
     ("algo", "算法", "SP_FileDialogDetailedView"),

@@ -654,6 +654,39 @@ gh api -X POST /repos/<owner>/<repo>/pages -F "source[branch]=gh-pages" -F "sour
 - **验证**：本项目用离屏脚本的实际输出对比——注册前 `families = 0`，注册后 `families = 5` 且 `Microsoft YaHei UI` 命中，截图里中文恢复正常。
 - **额外提醒**：`install_fonts()` 必须在 `QApplication(...)` **之后**、`MainWindow()` **之前**调用；字体文件是**绝对路径**，跨平台时要把 Linux/macOS 的字体路径一并列进候选（本项目 `_FONT_FILES` 里带了 DejaVu 兜底）。
 
+### 22. 打包后的 exe 一启动就崩：`attempted relative import with no known parent package`
+
+- **现象**：源码 `python -m desktop.main_window` 跑得好好的，打成 exe 后**双击无反应**，命令行运行能看到：
+  ```
+  Traceback (most recent call last):
+    File "main_window.py", line 19, in <module>
+  ImportError: attempted relative import with no known parent package
+  ```
+- **原因**：`desktop/main_window.py` 里用了**相对导入**：
+  ```python
+  from . import theme as T                 # ❌ 只在「作为包的一部分」被导入时才成立
+  from .batch_dialog import BatchDialog
+  ```
+  而以 `python desktop/main_window.py` 运行、或被 PyInstaller 当作**入口脚本**（`__main__`）时，模块**没有父包**，相对导入直接失败。源码模式常用 `python -m desktop.main_window`（走包机制）所以察觉不到，一打包就暴露。
+- **解决**（本项目采用）：把入口脚本改成**绝对包导入**，并在文件顶部把项目根补进 `sys.path`，这样三种运行方式全都成立：
+  ```python
+  import os, sys
+  _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+  if _ROOT not in sys.path:
+      sys.path.insert(0, _ROOT)
+
+  from desktop import theme as T            # ✅ 绝对导入
+  from desktop.batch_dialog import BatchDialog
+  from desktop.param_panel import ParamPanel
+  ```
+  同时给 PyInstaller 显式加上模块搜索路径与隐藏导入：
+  ```python
+  COMMON = [ ..., "--paths", ROOT,
+             "--hidden-import", "desktop", "--collect-all", "desktop" ]
+  ```
+- **验证**：`python -c "import runpy; runpy.run_path('desktop/main_window.py', run_name='not_main')"`（模拟脚本方式）与 `python -c "import desktop.main_window"`（模拟包方式）都要能通过，才算真正修好。
+- **一句话经验**：**能把包入口写成 `python -m pkg.module` 就写它**；如果非要让某个模块文件既能当脚本又能被 PyInstaller 当入口，就别用相对导入。
+
 
 ---
 
