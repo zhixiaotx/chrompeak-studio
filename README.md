@@ -18,8 +18,8 @@
   - [方式一：Web 端（最简单，免安装）](#方式一web-端最简单免安装)
   - [方式二：桌面 GUI 版（PyQt6）](#方式二桌面-gui-版pyqt6)
   - [方式三：命令行版（CLI / 批处理 / 服务器）](#方式三命令行版cli--批处理--服务器)
-  - [方式四：直接下载打包好的 .exe](#方式四直接下载打包好的-exe)
-  - [方式五：一键生成三个发布包](#方式五一键生成三个发布包)
+  - [方式四：打包成 .exe（免安装 Python）](#方式四打包成-exe免安装-python)
+  - [方式五：一键生成发布包](#方式五一键生成发布包)
 - [每个文件的作用（新手必读）](#每个文件的作用新手必读)
   - [核心算法包 `core/`（与界面无关，可被两端复用）](#核心算法包-core与界面无关可被两端复用)
   - [桌面端 `desktop/`](#桌面端-desktop)
@@ -143,7 +143,7 @@ chrompeak-studio/
 │   ├── param_panel.py        # 根据算法参数自动生成表单
 │   ├── batch_dialog.py       # 批量处理对话框
 │   ├── cli.py                # 命令行版本（无界面）
-│   ├── build_desktop.py      # 用 PyInstaller 打包成 .exe
+│   ├── build_desktop.py      # PyInstaller 打包（onedir 便携目录 / onefile 单文件）
 │   ├── requirements.txt      # 桌面端依赖
 │   └── installer.iss         # Inno Setup 安装包脚本（可选）
 ├── web/
@@ -252,38 +252,54 @@ python -m desktop.cli rerun   project.json --out peaks.csv
 
 `python -m core` 也能直接体验核心算法（读取示例数据并输出各算法峰数）。
 
-### 方式四：直接下载打包好的 .exe
+### 方式四：打包成 .exe（免安装 Python）
 
-`desktop/build_desktop.py` 用 PyInstaller 把 GUI 版和 CLI 版分别打包成独立 `.exe`，**目标电脑不需要安装 Python**：
+`desktop/build_desktop.py` 用 PyInstaller 打包，**目标电脑不需要安装 Python**。它支持两种形态，默认**两种都产出**：
 
 ```bash
 pip install -r desktop/requirements.txt
-python desktop/build_desktop.py
+
+python desktop/build_desktop.py                    # onedir + onefile 都产出（默认）
+python desktop/build_desktop.py --mode onedir      # 只要便携目录版
+python desktop/build_desktop.py --mode onefile     # 只要单文件版
 ```
 
-产物在 `dist/` 下：
+| 模式 | 产物 | 启动速度 | 分发方式 |
+| --- | --- | --- | --- |
+| `onedir` | `dist/ChromaPeakStudio/ChromaPeakStudio.exe`<br>`dist/ChromaPeakCLI/ChromaPeakCLI.exe` | **约 3 秒** | 必须带上同目录的 `_internal/`，即整个文件夹一起拷 |
+| `onefile` | `dist/ChromaPeakStudio.exe`<br>`dist/ChromaPeakCLI.exe` | 约 20~30 秒 | 单个 exe，拷走即可 |
 
-- `dist/ChromaPeakStudio/ChromaPeakStudio.exe` —— 双击即用（无控制台窗口）
-- `dist/ChromaPeakCLI/ChromaPeakCLI.exe` —— 命令行工具，可直接在 cmd / PowerShell / 服务器上跑
+> **怎么选**：onefile 每次运行都要把上百 MB 的内置依赖解压到 `%TEMP%\_MEIxxxxx`，进程结束后再删掉，所以冷启动慢；onedir 直接加载同目录的 `_internal/`，无需解压。
+> 要「快」选 onedir，要「一个文件」选 onefile。功能完全一致。
+
+两种模式各自的 GUI / CLI 体积参考（实测，单位 MB）：
+
+| 模式 | GUI | CLI |
+| --- | --- | --- |
+| onedir（整个文件夹） | ~277 | ~277 |
+| onefile（单个 exe） | ~110 | ~79 |
+
+> CLI 的单文件比 GUI 小 31 MB，是因为 CLI 版本**不打包 PyQt6 / pyqtgraph**（`cli.py` 只用 `core`）。早期版本两者都是统一 `--collect-all desktop`，导致命令行版白白背上整套 Qt —— 见避坑指南 #24。
 
 详见下文「[开发过程中踩过的坑](#开发过程中踩过的坑避坑指南)」中关于 PyInstaller 的注意事项。
 
-### 方式五：一键生成三个发布包
+### 方式五：一键生成发布包
 
-如果你需要**把成果分发给别人**（或者自己留档），跑根目录下的 `package_release.py`，一条命令产出三个互相独立、按需取用的压缩包：
+如果你需要**把成果分发给别人**（或者自己留档），跑根目录下的 `package_release.py`，一条命令产出互相独立、按需取用的压缩包：
 
 ```bash
 # 先按需准备好前置产物
-python desktop/build_desktop.py          # 生成 dist/（打 exe 包用）
-cd web/frontend && npm run build && cd ../..   # 生成 web/frontend/dist（打静态包用）
+python desktop/build_desktop.py                  # 生成 dist/（打 exe 包用）
+cd web/frontend && npm run build && cd ../..     # 生成 web/frontend/dist（打静态包用）
 
-# 一键打包（三个包）
+# 一键打包（全部）
 python package_release.py
 
-# 只要其中某几个
+# 只要其中某几个：可选 src / web / exe / onefile
 python package_release.py --only src,web
 python package_release.py --out-dir D:/deliver
 ```
+
 
 产物落在 `release/` 下：
 
@@ -291,18 +307,19 @@ python package_release.py --out-dir D:/deliver
 | --- | --- | --- | --- |
 | `ChromaPeakStudio-src-<ver>.zip` | ~190 KB | **纯源码**：`core/` 算法包、`desktop/`、`web/`（前后端源码）、`tests/`、`.github/` CI、`README.md`、`sample_data/` | 想二次开发 / 想自己编译的人 |
 | `ChromaPeakStudio-web-<ver>.zip` | ~125 KB | **静态站产物**：`index.html` + `assets/` + `404.html`，**ZIP 根目录就是站点根目录** | 只想部署网站的人（解压即上线） |
-| `ChromaPeakStudio-exe-<ver>.zip` | ~226 MB | **Windows 便携版**：`ChromaPeakStudio/`（GUI）+ `ChromaPeakCLI/`（CLI）两个 onedir 目录 | 不想装 Python 的终端用户 |
+| `ChromaPeakStudio-exe-<ver>.zip` | ~226 MB | **Windows 便携目录版**：`ChromaPeakStudio/`（GUI）+ `ChromaPeakCLI/`（CLI）两个 onedir 目录，**启动约 3 秒** | 不想装 Python、且在意启动速度的终端用户 |
+| `ChromaPeakStudio-onefile-<ver>.zip` | ~188 MB | **Windows 单文件版**：`ChromaPeakStudio.exe`（~110 MB）+ `ChromaPeakCLI.exe`（~79 MB），各是独立单文件，**启动约 20~30 秒** | 只想要「一个文件」的终端用户 |
 
 **设计约定**（都是踩过坑之后定的）：
 
-- 每个包内都放一份 `RELEASE_MANIFEST.txt`，写明**包内容 + 构建来源 + 使用方式 + 验证步骤**，拿到包的人不用回来翻 README。
+- 每个包内都放一份 `RELEASE_MANIFEST.txt`，写明**包内容 + 构建来源 + 使用方式 + 验证步骤**，拿到包的人不用回来翻 README。exe 类包还会写明 onedir / onefile 的启动速度差异，避免用户以为「双击没反应 = 坏了」。
 - 源码包**自动排除** `node_modules/`、`venv/`、`dist/`、`build/`、`__pycache__/`、`*.pyc`、`*.spec`、`*.log`、`*.db`，以及 `_old_*` 归档目录；单个文件超过 25 MB 会被跳过并在控制台提示，防止误把大文件打进去。之所以能压到 190 KB，就是因为这些全都排掉了。
 - 静态包**不包含后端**，部署后前端自动进入「离线演示模式」（算法在浏览器本地跑），因此**不会**出现请求不存在后端导致的 404 / 405。需要云端账号与保存时，再单独部署 `web/backend`。
 - **只读源目录、只写 `release/`，从不删除任何已有文件**：如果同名包已存在，会自动加时间戳后缀（如 `...-src-0.1.0_v090836.zip`）而不是覆盖。
-- 前置产物缺失时（比如还没 `npm run build`）会打印明确提示并跳过该包，**不会**产出一个空包。
+- 前置产物缺失时（比如还没 `npm run build`、或只构建了 onedir 没构建 onefile）会打印明确提示并跳过该包，**不会**产出一个空包。
 - `release/` 已加入 `.gitignore`，不会把几百 MB 的 exe 包提交进仓库。
 
-三个包的验证方式各不相同，最简单的自检：
+各包的验证方式不同，最简单的自检：
 
 ```bash
 # 源码包：确认解压后只有一个顶层目录，且没有构建产物混入
@@ -311,8 +328,12 @@ unzip -l release/ChromaPeakStudio-src-*.zip        # 条目应以 chrompeak-stud
 # 静态包：解压后直接起服务，页面应出现黄色「离线演示模式」提示条并正常出峰
 python -m http.server 8000
 
-# exe 包：解压后双击 ChromaPeakStudio.exe，界面文字应是正常中文而不是方块
+# 便携目录版：解压后双击 ChromaPeakStudio.exe，应很快出界面、文字是正常中文而非方块
+# 单文件版：双击后需等 20~30 秒（正在解压依赖）才出界面，属正常
 ```
+
+> 这两类 exe 包的体积差异主要来自打包方式：onefile 把依赖压缩进 exe 内部，所以单个文件大、启动要解压；onedir 把依赖摊在 `_internal/` 里，文件多但不用解压。
+
 
 ---
 
@@ -350,7 +371,7 @@ python -m http.server 8000
 | `desktop/param_panel.py` | `ParamPanel`：读取算法 `ParamSpec`（同时兼容对象与 dict 两种元数据），**自动生成参数表单**（输入框/勾选），改动时发出 `paramsChanged` 信号 |
 | `desktop/batch_dialog.py` | `BatchDialog`：选择文件夹 + 算法，批量跑并把每个文件的峰导出到输出目录 |
 | `desktop/cli.py` | **命令行版**：`analyze` / `batch` / `project` / `rerun` 四个子命令，适合服务器、CI、批处理。与 GUI 共用同一份 `core` |
-| `desktop/build_desktop.py` | **打包脚本**：调用 PyInstaller 生成两个 `.exe`（GUI 用 `--windowed`，CLI 用 `--console`），并把 `core` 与 `models` 作为数据打包进去 |
+| `desktop/build_desktop.py` | **打包脚本**：调用 PyInstaller 产出 GUI / CLI 两个目标。支持 `--mode both\|onedir\|onefile`（默认 both）。两条关键设计：① GUI 专属依赖（`--collect-all pyqtgraph` / `desktop`）与 CLI 依赖**分开传参**，避免 CLI 背上 76 MB 的 PyQt6（避坑 #24）；② 探测 `models/*.onnx` 是否存在，**有才打包** 41 MB 的 onnxruntime（避坑 #25）。把 `core` 与 `models` 作为数据打包进去 |
 | `desktop/requirements.txt` | 桌面端依赖清单（PyQt6 / pyqtgraph / numpy / scipy / onnxruntime / openpyxl / PyInstaller） |
 | `desktop/installer.iss` | Inno Setup 脚本，可把两个 `.exe` 打包成一个 Windows 安装程序（可选） |
 | `desktop/__init__.py` | 让 `desktop` 成为可 `import` 的包 |
@@ -408,7 +429,7 @@ python -m http.server 8000
 | `sample_data/out/` | CLI 运行产物示例 |
 | `.github/workflows/deploy.yml` | **GitHub Actions**：push 到 `main` 时自动 `npm ci && npm run build`，把 `web/frontend/dist` 部署到 `gh-pages` 分支 |
 | `start_desktop.bat` | Windows 双击启动桌面端的批处理（自动建 venv 并安装依赖） |
-| `package_release.py` | **发布打包脚本**（见「[方式五](#方式五一键生成三个发布包)」）：一条命令产出源码包 / 静态站包 / 便携 exe 包，每包内附 `RELEASE_MANIFEST.txt` 清单；只写 `release/`、从不删除已有文件，重名自动加时间戳 |
+| `package_release.py` | **发布打包脚本**（见「[方式五](#方式五一键生成发布包)」）：一条命令产出源码包 / 静态站包 / 便携目录包(onedir) / 单文件包(onefile)，每包内附 `RELEASE_MANIFEST.txt` 清单（含包内容、使用方式、验证步骤，exe 类还写明了启动速度差异）；只写 `release/`、从不删除已有文件，重名自动加时间戳 |
 
 ---
 
@@ -654,9 +675,22 @@ gh api -X POST /repos/<owner>/<repo>/pages -F "source[branch]=gh-pages" -F "sour
 - **原因**：`core/algorithms/__init__.py` 是**注册表 + 动态导入**，静态分析扫不到这些子模块。
 - **解决**：显式加 `--collect-all core`（连同 `pyqtgraph`、`onnxruntime`），并用 `--hidden-import` 补 `scipy.special._ufuncs_cxx` 这类 C 扩展。**凡是运行时才按名字导入的模块，都必须显式声明。**
 
-### 18. `--onedir` 还是 `--onefile`
-- **现象**：换 `--onefile` 后启动明显变慢（每次运行都要把整个包解压到临时目录）。
-- **解决**：本项目默认 `--onedir`，产出 `dist/ChromaPeakStudio/` 文件夹，**分发时把整个文件夹压缩打包即可**，换来秒开和易排查。
+### 18. `--onedir` 还是 `--onefile`：别只听「单文件方便」
+
+- **现象**：换 `--onefile` 后启动明显变慢 —— 因为 onefile 的 exe **每次运行**都要把内置依赖解压到 `%TEMP%\_MEIxxxxx`，进程结束后再删掉。
+- **实测数据**（本项目、本机 Windows，CLI 子命令 `--help`）：
+
+  | 模式 | 单程序目录 / 文件体积 | 冷启动耗时 |
+  | --- | --- | --- |
+  | `onedir` | 目录 ~277 MB | **约 3 秒** |
+  | `onefile` | 单文件 GUI ~110 MB / CLI ~79 MB | **约 25 秒** |
+
+  差了 **8 倍**。载荷越大（本项目带 scipy + numpy + PyQt6），解压开销越夸张。
+- **结论**：本项目 **两种都产出**（`python desktop/build_desktop.py`，默认 `--mode both`），发放时按场景选：
+  - **要速度** → `onedir` 便携目录版（发包时把整个文件夹压成 zip）
+  - **要「一个文件」** → `onefile` 单文件版
+- **顺带一提**：onefile 还有一个隐性依赖 —— 目标机器的 `%TEMP%` 必须有几百 MB 可用空间且可写；有些企业安全策略会禁止在临时目录执行程序，这类环境下 onefile 会直接失败，而 onedir 不受影响。
+
 
 ### 19. Vite 命令行里 `--` 分隔符：多了少了都不行
 - `vite --host --port 5180` 正常；
@@ -759,6 +793,56 @@ gh api -X POST /repos/<owner>/<repo>/pages -F "source[branch]=gh-pages" -F "sour
 - **也可以**：改用 `--distpath` 指向一个全新目录（例如 `dist_build_20260918/`），从根上避开「目标已存在」的删除动作。
 - **排查提示**：看到 `Removing dir ...` 后紧跟一条带 `count` 的删除保护日志，就是这个坑；**不要把「EXE built successfully」当成构建成功**，一定要看整体退出码和 `dist/` 里的时间戳。
 
+### 24. `--collect-all desktop` 让**命令行版白白背上整套 Qt**（+76 MB）
+
+- **现象**：CLI 版明明只是解析命令行、调 `core` 出峰，`cli.py` 里**一行 PyQt6 都没有**，但打出来的 CLI 产物里却躺着 76 MB 的 `PyQt6/` 和 4.8 MB 的 `pyqtgraph/`，体积和 GUI 版一模一样。
+- **原因**：打包脚本当时两个目标共用同一份参数，里面写了 `--collect-all desktop`。而 `desktop` 包里含有 `main_window.py` / `param_panel.py`，它们 `import PyQt6` / `import pyqtgraph` —— PyInstaller 顺着这条链把整棵依赖树都收了进来。
+  ```python
+  # 错误写法：CLI 和 GUI 共用
+  COMMON = [ ..., "--collect-all", "desktop", "--collect-all", "pyqtgraph" ]
+  ```
+  实测：GUI 与 CLI 的 `_internal/` 都是 **254 MB**，其中 `PyQt6` 76 MB、`pyqtgraph` 4.8 MB —— 对 CLI 来说全是无效负载。
+- **解决**：把 GUI 专属依赖拆出来，CLI 只拿自己需要的：
+  ```python
+  GUI_EXTRA = ["--windowed", "--collect-all", "pyqtgraph", "--collect-all", "desktop"]
+  CLI_EXTRA = ["--console", "--collect-all", "openpyxl"]   # cli.py 只用 core + openpyxl
+  ```
+  参数靠 `*GUI_EXTRA` / `*CLI_EXTRA` 展开，两者互不污染。修完后**单文件 CLI 从 ~110 MB 降到 ~79 MB**。
+- **一句话经验**：**打包参数要按目标拆分，别图省事共用一份 `COMMON`。** 打包完随手对比一下各目标的体积，差得离谱就是「有人偷偷把用不到的东西带上了」。
+
+### 25. 惰性导入的依赖，能不打就不打（onnxruntime 41 MB）
+
+- **背景**：`core/algorithms/gnn_deconv.py` 里 onnxruntime 是**惰性导入**的，而且只在模型文件存在时才走推理分支：
+  ```python
+  def _load_session():
+      model = os.path.join(os.path.dirname(__file__), "..", "..", "models", "gnn.onnx")
+      if not os.path.exists(model):
+          return None          # 没模型 → 按设计回退到「二阶导 + 相对阈值」
+      import onnxruntime as ort          # 只有这里才会真正 import
+      ...
+  ```
+  而仓库里 `models/` 只有 `.gitkeep`，**根本没有 `gnn.onnx`**。
+- **问题**：早期脚本里写死了 `--collect-all onnxruntime`，于是每个 exe 都白背 **41 MB** 永远不会被加载的推理引擎。
+- **解决**：打包前探测模型是否存在，**有才打**：
+  ```python
+  def has_onnx_model() -> bool:
+      return any(f.lower().endswith(".onnx") for f in os.listdir(MODELS_DIR))
+
+  def _common_with_onnx(mode):
+      args = list(COMMON) + [MODES[mode]]
+      if has_onnx_model():
+          args += ["--collect-all", "onnxruntime"]
+      return args
+  ```
+  并在构建开始时把判断结果打出来，避免「为什么这次包变小了」的疑惑：
+  ```
+  models/ 下无 .onnx 模型 —— 跳过 onnxruntime（省约 41 MB/个）
+    （ALG-GNN 会按设计回退到二阶导 + 相对阈值，功能不受影响）
+  ```
+- **验证**：构建后跑 `analyze --algorithms ALG-GNN`，应正常出峰（走回退分支）——本项目实测 24 peaks（6 算法）。
+- **注意**：这类「按需打包」必须**同时确认回退路径真的可用**，否则就是拿功能换体积。本项目 `ALG-GNN` 有明确的回退实现，才敢这么干。
+
+
 
 ---
 
@@ -781,7 +865,16 @@ A：能，而且**不需要登录**。前端内置了一套完整的 **TypeScrip
 A：两列数值，第一行可以是表头（程序会自动跳过非数字行）。第一列是 `x`（时间/索引），第二列是 `y`（响应值）。
 
 **Q：打包好的 exe 有多大？**
-A：GUI 版约 23MB，CLI 版约 23MB，拷贝整个 `dist/<名字>/` 文件夹即可在没有 Python 的电脑上运行。
+A：分两种形态，实测数据如下：
+
+| 模式 | GUI | CLI | 启动 |
+| --- | --- | --- | --- |
+| `--onedir`（整个文件夹，可压成 zip） | ~277 MB | ~277 MB | **约 3 秒** |
+| `--onefile`（单个 exe） | ~110 MB | ~79 MB | 约 25 秒 |
+
+`--onefile` 的 CLI 之所以比 GUI 小 31 MB，是因为它**不打包 PyQt6 / pyqtgraph**（`cli.py` 只依赖 `core`）。早先两者共用打包参数时，CLI 也被塞进了整套 Qt，白白多出 76 MB —— 详见避坑指南 #24。
+
+需要「快」就用 onedir（把整个文件夹压成 zip 分发），需要「一个文件」就用 onefile。两者功能完全一致。
 
 **Q：算法结果不准怎么办？**
 A：先看多算法对比，若只有一种算法报出峰，多半是噪声；再调对应算法的阈值/平滑参数（GUI 和 Web 都能实时调，250~200ms 防抖）。

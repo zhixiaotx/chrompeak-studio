@@ -284,12 +284,13 @@ def build_web(version: str, out_dir: Path) -> Path | None:
 
 
 def build_exe(version: str, out_dir: Path) -> Path | None:
-    print("\n[3/3] 便携 exe 包 …")
+    """便携目录版（PyInstaller --onedir）：两个 exe 各自带一个 _internal/ 目录。"""
+    print("\n[3/4] 便携目录包（onedir）…")
     gui_dir = ROOT / "dist" / "ChromaPeakStudio"
     cli_dir = ROOT / "dist" / "ChromaPeakCLI"
     if not gui_dir.is_dir():
         print("  ! 未找到 dist/ChromaPeakStudio —— 请先打包：")
-        print("      python desktop/build_desktop.py")
+        print("      python desktop/build_desktop.py --mode onedir")
         return None
 
     dst = unique_path(out_dir / f"ChromaPeakStudio-exe-{version}.zip")
@@ -306,7 +307,7 @@ def build_exe(version: str, out_dir: Path) -> Path | None:
                     zf.write(src, arcname=str(Path(label) / rel))
                     count += 1
 
-        manifest = f"""ChromaPeak Studio — 便携版 (Windows portable)
+        manifest = f"""ChromaPeak Studio — 便携目录版 (Windows portable, onedir)
 =================================================
 版本        : {version}
 生成时间    : {time.strftime('%Y-%m-%d %H:%M:%S')}
@@ -317,6 +318,11 @@ def build_exe(version: str, out_dir: Path) -> Path | None:
 
 目标机器无需安装 Python / 无需安装任何依赖，解压即用。
 请保持各自目录内的 _internal/ 文件夹与 exe 同级，切勿只单独拷 exe。
+
+为什么推荐这一版
+----------------
+onedir 的 exe 启动时**不需要解压**，直接加载同目录的 _internal/，实测启动约 3 秒。
+（对比：onefile 单文件版每次启动都要把上百 MB 依赖解压到临时目录，实测约 25 秒。）
 
 使用方式
 --------
@@ -344,7 +350,77 @@ def build_exe(version: str, out_dir: Path) -> Path | None:
 
 系统要求
 --------
-Windows 10 / 11 (x64)。首次启动可能稍慢（需解压内置依赖）。
+Windows 10 / 11 (x64)。
+"""
+        write_manifest(zf, "RELEASE_MANIFEST.txt", manifest)
+
+    return dst
+
+
+def build_onefile(version: str, out_dir: Path) -> Path | None:
+    """单文件版（PyInstaller --onefile）：GUI 与 CLI 各是一个独立 exe。"""
+    print("\n[4/4] 单文件包（onefile）…")
+    pairs = [
+        ("ChromaPeakStudio.exe", ROOT / "dist" / "ChromaPeakStudio.exe"),
+        ("ChromaPeakCLI.exe", ROOT / "dist" / "ChromaPeakCLI.exe"),
+    ]
+    present = [(n, p) for n, p in pairs if p.is_file()]
+    if not present:
+        print("  ! 未找到 dist/ChromaPeakStudio.exe —— 请先打包：")
+        print("      python desktop/build_desktop.py --mode onefile")
+        return None
+
+    dst = unique_path(out_dir / f"ChromaPeakStudio-onefile-{version}.zip")
+    rows: list[tuple[str, str]] = []
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for name, path in present:
+            zf.write(path, arcname=name)
+            rows.append((name, human(path.stat().st_size)))
+        for name, p in pairs:
+            if not p.is_file():
+                print(f"  - 跳过 {name}（不存在）")
+
+        listing = "\n".join(f"  {n:<24} {s}" for n, s in rows)
+        manifest = f"""ChromaPeak Studio — 单文件版 (Windows portable, onefile)
+=================================================
+版本        : {version}
+生成时间    : {time.strftime('%Y-%m-%d %H:%M:%S')}
+解压后文件  :
+{listing}
+
+每个 exe 都是**完全独立**的单文件，不需要 _internal/ 目录，拷走即可运行。
+
+务必注意：启动明显变慢
+----------------------
+onefile 的 exe 每次运行都要先把内置依赖解压到系统临时目录（%TEMP%/_MEIxxxxx），
+进程结束后再删掉。实测本机：
+    onedir  版 CLI 启动  约  3 秒
+    onefile 版 CLI 启动  约 25 秒
+所以：**想要「快」请用 onedir 便携目录版；只想要「一个文件」再用这一版。**
+
+使用方式
+--------
+  图形界面版：双击 ChromaPeakStudio.exe
+  命令行版  ：
+    ChromaPeakCLI.exe analyze sample_data/demo.csv --algorithms ALG-D ALG-E ALG-W
+    ChromaPeakCLI.exe batch   data_dir --out-dir out --algorithms ALG-D
+    ChromaPeakCLI.exe project data.csv --out project.json
+    ChromaPeakCLI.exe rerun   project.json --out peaks.csv
+
+验证步骤
+--------
+  1. 解压到任意目录，建议路径不含中文与空格
+  2. 双击 ChromaPeakStudio.exe（首次请耐心等待约 20~30 秒），
+     确认窗口正常显示、界面文字为正常中文（非方块）、无报错弹窗
+  3. 在 cmd 中执行：
+       ChromaPeakCLI.exe --help
+       ChromaPeakCLI.exe analyze <某个CSV> --out peaks.csv
+  4. 若双击后长时间无反应，属正常现象（正在解压）；若最终报错，
+     请检查杀毒软件是否拦截了临时目录写入
+
+系统要求
+--------
+Windows 10 / 11 (x64)。启动需要系统临时目录（%TEMP%）有约 300 MB 可用空间。
 """
         write_manifest(zf, "RELEASE_MANIFEST.txt", manifest)
 
@@ -356,21 +432,22 @@ Windows 10 / 11 (x64)。首次启动可能稍慢（需解压内置依赖）。
 BUILDERS = {
     "src": ("源码包", build_src),
     "web": ("静态站包", build_web),
-    "exe": ("便携 exe 包", build_exe),
+    "exe": ("便携目录包 onedir", build_exe),
+    "onefile": ("单文件包 onefile", build_onefile),
 }
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="ChromaPeak Studio 发布打包")
-    ap.add_argument("--only", default="src,web,exe",
-                    help="只打指定包，逗号分隔，可选 src / web / exe（默认全部）")
+    ap.add_argument("--only", default="src,web,exe,onefile",
+                    help="只打指定包，逗号分隔，可选 src / web / exe / onefile（默认全部）")
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT), help="输出目录（默认 ./release）")
     args = ap.parse_args(argv)
 
     want = [k.strip() for k in args.only.split(",") if k.strip()]
     unknown = [k for k in want if k not in BUILDERS]
     if unknown:
-        print(f"未知的包类型：{unknown}（可选：src / web / exe）", file=sys.stderr)
+        print(f"未知的包类型：{unknown}（可选：src / web / exe / onefile）", file=sys.stderr)
         return 2
 
     out_dir = Path(args.out_dir)
@@ -385,7 +462,7 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 62)
 
     results: list[tuple[str, Path, int, int]] = []
-    for i, key in enumerate(("src", "web", "exe"), start=1):
+    for key in ("src", "web", "exe", "onefile"):
         if key not in want:
             continue
         label, fn = BUILDERS[key]
