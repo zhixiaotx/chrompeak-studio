@@ -15,6 +15,9 @@ dist/
 *.spec
 build_desktop.log
 
+# 发布包（package_release.py 输出，体积可达数百 MB）
+release/
+
 # ---- Node ----
 node_modules/
 web/frontend/dist/

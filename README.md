@@ -19,6 +19,7 @@
   - [方式二：桌面 GUI 版（PyQt6）](#方式二桌面-gui-版pyqt6)
   - [方式三：命令行版（CLI / 批处理 / 服务器）](#方式三命令行版cli--批处理--服务器)
   - [方式四：直接下载打包好的 .exe](#方式四直接下载打包好的-exe)
+  - [方式五：一键生成三个发布包](#方式五一键生成三个发布包)
 - [每个文件的作用（新手必读）](#每个文件的作用新手必读)
   - [核心算法包 `core/`（与界面无关，可被两端复用）](#核心算法包-core与界面无关可被两端复用)
   - [桌面端 `desktop/`](#桌面端-desktop)
@@ -166,6 +167,8 @@ chrompeak-studio/
 │       └── package.json
 ├── tests/                    # 单元测试
 ├── sample_data/              # 演示用 CSV / 项目 JSON
+├── package_release.py        # 一键生成源码包 / 静态站包 / 便携 exe 包
+├── release/                  # 发布包输出目录（已 gitignore）
 ├── .github/workflows/deploy.yml  # GitHub Actions 自动部署
 └── start_desktop.bat         # 双击启动桌面端的脚本
 ```
@@ -265,6 +268,52 @@ python desktop/build_desktop.py
 
 详见下文「[开发过程中踩过的坑](#开发过程中踩过的坑避坑指南)」中关于 PyInstaller 的注意事项。
 
+### 方式五：一键生成三个发布包
+
+如果你需要**把成果分发给别人**（或者自己留档），跑根目录下的 `package_release.py`，一条命令产出三个互相独立、按需取用的压缩包：
+
+```bash
+# 先按需准备好前置产物
+python desktop/build_desktop.py          # 生成 dist/（打 exe 包用）
+cd web/frontend && npm run build && cd ../..   # 生成 web/frontend/dist（打静态包用）
+
+# 一键打包（三个包）
+python package_release.py
+
+# 只要其中某几个
+python package_release.py --only src,web
+python package_release.py --out-dir D:/deliver
+```
+
+产物落在 `release/` 下：
+
+| 包名 | 体积（参考） | 内容 | 给谁用 |
+| --- | --- | --- | --- |
+| `ChromaPeakStudio-src-<ver>.zip` | ~190 KB | **纯源码**：`core/` 算法包、`desktop/`、`web/`（前后端源码）、`tests/`、`.github/` CI、`README.md`、`sample_data/` | 想二次开发 / 想自己编译的人 |
+| `ChromaPeakStudio-web-<ver>.zip` | ~125 KB | **静态站产物**：`index.html` + `assets/` + `404.html`，**ZIP 根目录就是站点根目录** | 只想部署网站的人（解压即上线） |
+| `ChromaPeakStudio-exe-<ver>.zip` | ~226 MB | **Windows 便携版**：`ChromaPeakStudio/`（GUI）+ `ChromaPeakCLI/`（CLI）两个 onedir 目录 | 不想装 Python 的终端用户 |
+
+**设计约定**（都是踩过坑之后定的）：
+
+- 每个包内都放一份 `RELEASE_MANIFEST.txt`，写明**包内容 + 构建来源 + 使用方式 + 验证步骤**，拿到包的人不用回来翻 README。
+- 源码包**自动排除** `node_modules/`、`venv/`、`dist/`、`build/`、`__pycache__/`、`*.pyc`、`*.spec`、`*.log`、`*.db`，以及 `_old_*` 归档目录；单个文件超过 25 MB 会被跳过并在控制台提示，防止误把大文件打进去。之所以能压到 190 KB，就是因为这些全都排掉了。
+- 静态包**不包含后端**，部署后前端自动进入「离线演示模式」（算法在浏览器本地跑），因此**不会**出现请求不存在后端导致的 404 / 405。需要云端账号与保存时，再单独部署 `web/backend`。
+- **只读源目录、只写 `release/`，从不删除任何已有文件**：如果同名包已存在，会自动加时间戳后缀（如 `...-src-0.1.0_v090836.zip`）而不是覆盖。
+- 前置产物缺失时（比如还没 `npm run build`）会打印明确提示并跳过该包，**不会**产出一个空包。
+- `release/` 已加入 `.gitignore`，不会把几百 MB 的 exe 包提交进仓库。
+
+三个包的验证方式各不相同，最简单的自检：
+
+```bash
+# 源码包：确认解压后只有一个顶层目录，且没有构建产物混入
+unzip -l release/ChromaPeakStudio-src-*.zip        # 条目应以 chrompeak-studio/ 开头
+
+# 静态包：解压后直接起服务，页面应出现黄色「离线演示模式」提示条并正常出峰
+python -m http.server 8000
+
+# exe 包：解压后双击 ChromaPeakStudio.exe，界面文字应是正常中文而不是方块
+```
+
 ---
 
 ## 每个文件的作用（新手必读）
@@ -359,6 +408,7 @@ python desktop/build_desktop.py
 | `sample_data/out/` | CLI 运行产物示例 |
 | `.github/workflows/deploy.yml` | **GitHub Actions**：push 到 `main` 时自动 `npm ci && npm run build`，把 `web/frontend/dist` 部署到 `gh-pages` 分支 |
 | `start_desktop.bat` | Windows 双击启动桌面端的批处理（自动建 venv 并安装依赖） |
+| `package_release.py` | **发布打包脚本**（见「[方式五](#方式五一键生成三个发布包)」）：一条命令产出源码包 / 静态站包 / 便携 exe 包，每包内附 `RELEASE_MANIFEST.txt` 清单；只写 `release/`、从不删除已有文件，重名自动加时间戳 |
 
 ---
 
