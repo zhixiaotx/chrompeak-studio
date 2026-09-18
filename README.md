@@ -408,7 +408,6 @@ python -m http.server 8000
 | `src/components/AboutPanel.tsx` | **关于面板**：版本、架构说明、算法清单与快捷操作提示 |
 | `src/components/PeakTable.tsx` | **峰表**：来源筛选 + 关键字过滤 + 全部峰的指标表格（rt/最小点/峰高/面积/峰宽/分离度/不对称/置信度/来源/标记） |
 | `src/components/BottomPanel.tsx` | **底部区域**：峰表 / 结果（共识峰）/ 文件信息 三个标签页 + 底部状态栏（文件 · 点数 · 采样间隔 · 算法 · 峰数 · 耗时 · 光标） |
-| `src/components/ResultTable.tsx` | ⚠️ **旧版结果表，已被 `PeakTable.tsx` + `BottomPanel.tsx` 取代，当前无引用**（保留仅为兼容历史，可安全删除） |
 | `src/components/Auth.tsx` | 登录/注册表单。**离线模式（`disabled`）下输入框与按钮全部禁用**，并提示"离线演示模式下无需登录"，从源头避免向不存在的后端发 POST 而报 405 |
 | `src/utils/localProjects.ts` | **本地项目仓库**：离线模式下的「保存项目」。把 `name / algorithms / params / x / y / results` 存进 `localStorage`，支持列出、读取、删除、改名；写入超限时自动丢弃最旧项目，避免 `QuotaExceededError` |
 | `src/utils/localBatch.ts` | **离线 ZIP 批量**：用 `jszip` 在浏览器里解压上传的 ZIP → 逐个 CSV 走本地引擎出峰 → 汇总 `summary.csv` + 每个文件一个 `peaks/xxx_peaks.csv` → 再打包成新 ZIP 下载。每处理完一个文件 `setTimeout(0)` 让出主线程，避免大数据量时页面假死 |
